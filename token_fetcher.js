@@ -162,7 +162,7 @@ const Main = async () => {
         )
 
         const byIDAsJson = JSON.stringify(byID, null, 4);
-        fs.writeFile('tokens.json', byIDAsJson, 'utf-8', (error) => console.log(error))
+        fs.writeFile('./data/tokens.json', byIDAsJson, 'utf-8', (error) => console.log(error))
         
     } catch (error) {
         console.log(error);
