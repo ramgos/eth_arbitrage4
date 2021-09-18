@@ -29,25 +29,33 @@ const AnalyzePair = async (index, factoryContract) => {
                 pairContract.methods.token1().call(),
             ]);
 
-            let isSwithced;
+            // NOTE: prev commit order of tokens in data (token0, token1) is not preserved, and may contain false data in pairs
+            // Where token0 isn't WMATIC
+
+            // changed from swapping of reserves to 'token0isPrimary'
+            let token0isPrimary;
             if (token0 === consts.WMATIC) {
-                isSwithced = false;
+                token0isPrimary = true;
             }
             else if (token1 === consts.WMATIC) {
-                isSwithced = true;    
+                token0isPrimary = false;    
             }
             else {
                 return;
             }
 
             const reserves = await pairContract.methods.getReserves().call();
-            let [reserve0, reserve1] = [reserves._reserve0, reserves._reserve1];
+            const [reserve0, reserve1] = [reserves._reserve0, reserves._reserve1];
             const [minWMATICLiquidity, WMATICDecimals] = [new BN(10000), new BN(18)] 
 
-            if (isSwithced) {
-                [reserve0, reserve1] = [reserve1, reserve0];
+            let wmaticBalance;
+            if (token0isPrimary) {
+                wmaticBalance = reserve0;
             }
-            if (reserve0 > minWMATICLiquidity.pow(WMATICDecimals)) { // at least 10000 wmatic to be valid
+            else {
+                wmaticBalance = reserve1;
+            }
+            if (wmaticBalance > minWMATICLiquidity.pow(WMATICDecimals)) { // at least 10000 wmatic to be valid
 
                 // TODO add more checks of contracts
 
@@ -110,8 +118,8 @@ const Worker = async (jobsIterator) => {
     for (const [index, factoryContract] of jobsIterator) {
         const res = await AnalyzePair(index, factoryContract);
         results.push(res);
-        // wait 500 to not overwhelm node, remove if this is ran from node's server with IPC
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // wait 300 to not overwhelm node, remove if this is ran from node's server with IPC
+        await new Promise(resolve => setTimeout(resolve, 300));
     }
     return results;
 }
