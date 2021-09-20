@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "bignumber.js": "^9.0.1",
     "lodash": "^4.17.21",
     "web3": "^1.5.2"
   }

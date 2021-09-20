@@ -1,12 +1,12 @@
 const Web3 = require('web3');
-const BN = require('bn.js');
+const BigNumber = require('bignumber.js');
 
 const pairABI = require('./data/SushiPairABI.json'); 
 const dexes = require('./data/dexes.json');
 const config = require('./data/config.json');
 const tokens = require('./data/tokens.json');
 
-const web3 = new Web3(config.MORALIS_WSS);
+const web3 = new Web3(config.WSS_RPC);
 
 
 const ReservePairData = (originalPairData) => {
@@ -17,8 +17,8 @@ const ReservePairData = (originalPairData) => {
         latestHash: 0,
         token0: originalPairData.token0,
         token1: originalPairData.token1,
-        reserve0: new BN(0),
-        reserve1: new BN(0),
+        reserve0: new BigNumber(0),
+        reserve1: new BigNumber(0),
     };
 }
 
@@ -26,11 +26,9 @@ const ReservePairData = (originalPairData) => {
 const Main = () => {
     const pairAddressToGroupId = new Map();
     const pairAddressToReservePairData = new Map();  // save data about reserves for each pair contract
-    const groupIdToLock = new Map();  // lock groups if they are calculating
 
     // setup maps
     Object.entries(tokens).forEach(([id, tokenPairs]) => {
-        groupIdToLock.set(id, 0);
         tokenPairs.forEach((elem) => {
             pairAddressToGroupId.set(elem.pairAddress, id);
             pairAddressToReservePairData.set(elem.pairAddress, ReservePairData(elem));
@@ -57,19 +55,23 @@ const Main = () => {
             const pairAddress = result.address;
             if (pairAddressToGroupId.has(pairAddress) && !result.removed) {
                 // parse reserve data from log and update
-                const [reserve0, reserve1] = result.data.slice(2).match(/.{1,64}/g).map(hex => new BN(hex, 16));
+                const [reserve0, reserve1] = result.data.slice(2).match(/.{1,64}/g).map(hex => new BigNumber(hex, 16));
+
+                console.log(`${pairAddress} previous reserve data: reserve0: ${pairAddressToReservePairData.get(pairAddress).reserve0} reserve1: ${pairAddressToReservePairData.get(pairAddress).reserve0}`)
+
                 updatePairReservesData(pairAddress, result.transactionHash, reserve0, reserve1);
+                
+                console.log(`${pairAddress} updated reserve data: reserve0: ${pairAddressToReservePairData.get(pairAddress).reserve0} reserve1: ${pairAddressToReservePairData.get(pairAddress).reserve0}`)
 
                 const groupId = pairAddressToGroupId.get(pairAddress);
                 const otherPairContractsInGroup = tokens[groupId].filter(elem => elem.pairAddress !== pairAddress);  // all pair contracts in group except the one that recieved the sync event
+
                 otherPairContractsInGroup.forEach((otherPair) => {
                     const otherPairReserveData = pairAddressToReservePairData.get(otherPair.pairAddress);
                     const eventPairReserveData = pairAddressToReservePairData.get(pairAddress);
 
                     // here calculate arbitrage profitability, if profitable append to queue and let different process handle sending transactions
                     
-                    console.log(otherPair.pairAddress);
-                    console.log(pairAddress);
                 })
                 console.log();
             }
