@@ -63,7 +63,7 @@ const VirtualReservePairData = (reservePairData) => {
 const Main = async () => {
     const queue = new Queue({ connection: connectionDetails }, jobs);
     queue.on("error", function (error) {
-      console.log(error);
+        console.log(error);
     });
     await queue.connect();
 
@@ -107,11 +107,18 @@ const Main = async () => {
         const vPairReserveData0 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress0));
         const vPairReserveData1 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress1));
 
+        const vPair0DexData = pairAddressToDexData.get(pairAddress0);
+        const vPair1DexData = pairAddressToDexData.get(pairAddress0);
+
         const optimalAmount = extraMath.ceil(arbMath.getOptimalAmount(
             vPairReserveData0.reserve0, 
             vPairReserveData0.reserve1,
             vPairReserveData1.reserve0,
-            vPairReserveData1.reserve1
+            vPairReserveData1.reserve1,
+            vPair0DexData.a,
+            vPair0DexData.b,
+            vPair1DexData.a,
+            vPair1DexData.b
         ));
 
         if (optimalAmount.isGreaterThanOrEqualTo(new BigNumber(1))) {

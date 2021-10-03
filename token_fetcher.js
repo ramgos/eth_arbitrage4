@@ -11,7 +11,7 @@ const factoryABI = require('./data/SushiFactoryABI.json');
 const pairABI = require('./data/SushiPairABI.json');
 const ERC20ABI = require('./data/ERC20ABI.json');
 
-const web3 = new Web3(config.RPC_URL);
+const web3 = new Web3(config.WSS_RPC);
 
 
 // TODO add support to multiple primary tokens, rn only wmatic is supported
