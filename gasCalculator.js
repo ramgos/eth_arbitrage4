@@ -8,13 +8,17 @@ const pendingTxHashToInfo = new Map();
 const blockToPendingTxHash = new Map();
 const blockToGasPricesToChances = new Map();
 
-
-const EXPIRY_TIME = 60000;
-const DEPTH = 10;
+const EXPIRY_TIME = 600000;
+const DEPTH = 30;
 
 let lastBlockNumber = 0;
-let firstBlockNumber = 0;
 let locked = true;  // events locked until gotten block number
+
+
+const ErrorCode = {
+    EmptyHistory: "EmptyHistory",
+    GasTooLow: "GasTooLow",
+}
 
 
 const defaultProbabiltyObject = (size) => {
@@ -26,15 +30,15 @@ const defaultProbabiltyObject = (size) => {
 }
 
 
-// apply smoothing (add yes values from gas prices below, add no values from gas prices above)
-const orderedSmoothedGasPriceToChances = (gasPriceToChances) => {
+// apply smoothing (add yes values from gas prices below, add no values from gas prices above) no order
+const smoothedGasPriceToChances = (gasPriceToChances) => {
     const gasPriceChancesSmoothedUnordered = new Map();
 
-    gasPriceToChances.forEach((valueI, keyI, mapI) => {
+    gasPriceToChances.forEach((valueI, keyI) => {
         const bnGasPrice = new BigNumber(keyI);
         const yesNo = _.cloneDeep(valueI);
 
-        gasPriceToChances.forEach((valueJ, keyJ, mapJ) => {
+        gasPriceToChances.forEach((valueJ, keyJ) => {
             if (keyJ === keyI) { return; }
             if (bnGasPrice.isGreaterThan(new BigNumber(keyJ))) {
                 Object.keys(valueJ.yes).forEach((key) => {
@@ -50,11 +54,97 @@ const orderedSmoothedGasPriceToChances = (gasPriceToChances) => {
         gasPriceChancesSmoothedUnordered.set(keyI, yesNo);
     });
 
+    return gasPriceChancesSmoothedUnordered;
+}
+
+
+// apply smoothing (add yes values from gas prices below, add no values from gas prices above) and order
+const orderedSmoothedGasPriceToChances = (gasPriceToChances) => {
+    const gasPriceChancesSmoothedUnordered = smoothedGasPriceToChances(gasPriceToChances);
+
     const gasPriceChancesSmoothedOrdered = new Map([...gasPriceChancesSmoothedUnordered].sort((a, b) => {
         return (new BigNumber(a[0])).comparedTo(new BigNumber(b[0])); 
     }));
 
     return gasPriceChancesSmoothedOrdered;
+}
+
+
+// sum yes no objects in array with weight equal to pos in array
+const summedOrderedSmoothedGasPricesToChances = (gasPriceToChancesArray) => {
+    const orderedSmoothGasPricesToChances = gasPriceToChancesArray.map(smoothedGasPriceToChances);
+    let summedGasPricesToChances = new Map();
+    for (let i = 0; i < gasPriceToChancesArray.length; i++) {
+        const gasPriceToChances = orderedSmoothGasPricesToChances[i];
+        const weight = 1;
+
+        gasPriceToChances.forEach((yesNo, gasPrice) => {
+            if (!summedGasPricesToChances.has(gasPrice)) {
+                summedGasPricesToChances.set(gasPrice, {
+                    yes: defaultProbabiltyObject(DEPTH),
+                    no: defaultProbabiltyObject(DEPTH)
+                });
+            }
+
+            Object.keys(yesNo.yes).forEach((key) => {
+                summedGasPricesToChances.get(gasPrice).yes[key] += yesNo.yes[key] * weight;
+            });
+            Object.keys(yesNo.no).forEach((key) => {
+                summedGasPricesToChances.get(gasPrice).no[key] += yesNo.no[key] * weight;
+            });
+        });
+    }
+
+    // order
+    const summedGasPricesToChancesOrdered = new Map([...summedGasPricesToChances].sort((a, b) => {
+        return (new BigNumber(a[0])).comparedTo(new BigNumber(b[0])); 
+    }));
+
+    return summedGasPricesToChancesOrdered;
+}
+
+
+// see bottom comment
+const processYesNo = (yesNo, inXBlocksOrLess) => {
+    let yes = 0;
+    let no = 0;
+
+    for (let i = inXBlocksOrLess; i > 0; i--) { yes += yesNo.yes[i];}
+    no = yesNo.no[inXBlocksOrLess];
+
+    return [yes, no];
+}
+
+
+// get summed chances of DEPTH last blocks of gasPrice
+const gasAndTimeToChance = (gasPrice, inXBlocksOrLess) => {
+    const summedGasPricesToChances = summedOrderedSmoothedGasPricesToChances([...blockToGasPricesToChances.values()].slice(-1 * (DEPTH * 2 + 1), -1));
+    const bnGasPrice = new BigNumber(gasPrice)
+    const entries = [...summedGasPricesToChances.entries()];
+
+    if (entries.length === 0 ) { throw new Error(ErrorCode.EmptyHistory); }
+
+    // possible optimization: binary search
+    for (let i = 0; i < entries.length - 1; i++) {
+        const left = entries[i];
+        const right = entries[i + 1];
+        const leftGasPrice = new BigNumber(left[0]);
+        const rightGasPrice = new BigNumber(right[0]);
+
+        if (bnGasPrice.isGreaterThan(rightGasPrice)) {
+            continue;
+        }
+        else {
+            if (bnGasPrice.isGreaterThan(leftGasPrice)) {
+                return processYesNo(left[1], inXBlocksOrLess);
+            }
+            else {
+                throw new Error(ErrorCode.GasTooLow);
+            }
+        }
+    }
+    
+    return processYesNo(entries[entries.length - 1][1], inXBlocksOrLess);
 }
 
 
@@ -88,6 +178,7 @@ web3.eth.subscribe('pendingTransactions', (error, tx_hash) => {
         if (!blockToGasPricesToChances.has(lastBlockNumber)) {
             blockToGasPricesToChances.set(lastBlockNumber, new Map());
         }
+        
         setTimeout(() => {
             pendingTxHashToInfo.delete(tx_hash);
         }, EXPIRY_TIME);
@@ -107,6 +198,7 @@ web3.eth.subscribe('newBlockHeaders', (error, blockHeader) => {
         // set of all transactions approved in block
         const blockTransactions = new Set(blockData.transactions);
         
+
         // iterate over 10 blocks before this
         for (let i = 1; i < DEPTH + 1; i++) {
             // break if no data about block
@@ -144,8 +236,12 @@ web3.eth.subscribe('newBlockHeaders', (error, blockHeader) => {
             });
         }
 
-        if (!blockToGasPricesToChances.has(firstBlockNumber + 1)) { return; }
-        console.log(orderedSmoothedGasPriceToChances(blockToGasPricesToChances.get(firstBlockNumber + 1)));
+        try {
+            console.log(gasAndTimeToChance('35000000000', 3));
+        }
+        catch (error) {
+            console.log('lol no worries');
+        }
     });
 });
 
