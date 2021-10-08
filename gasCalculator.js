@@ -1,6 +1,7 @@
 const Web3 = require('web3');
 const BigNumber = require('bignumber.js');
 const _ = require('lodash');
+
 const config = require('./data/config.json');
 
 const web3 = new Web3(config.WSS_RPC);
@@ -10,9 +11,9 @@ const blockToGasPricesToChances = new Map();
 
 const EXPIRY_TIME = 600000;
 const DEPTH = 30;
+const gweiMatch = /([0-9]{1,})[0-9]{9}/;
 
-let lastBlockNumber = 0;
-let locked = true;  // events locked until gotten block number
+let lastBlockNumber = 0;  // not actual block number, but block counter
 
 
 const ErrorCode = {
@@ -30,43 +31,73 @@ const defaultProbabiltyObject = (size) => {
 }
 
 
+const addYes = (yesTo, yesFrom, weight) => {
+    Object.keys(yesTo).forEach((key) => {
+        yesTo[key] += yesFrom[key] * weight;
+    });
+}
+
+const addNo = (noTo, noFrom, weight) => {
+    Object.keys(noTo).forEach((key) => {
+        noTo[key] += noFrom[key] * weight;
+    });
+}
+
+const addYesNo = (yesNoTo, yesNoFrom, weight) => {
+    addYes(yesNoTo.yes, yesNoFrom.yes, weight);
+    addNo(yesNoTo.no, yesNoFrom.no, weight);
+}
+
+
+const addYesNoIterable = (yesNoTo, yesNoFromArray, weight) => {
+    for (let i = 0; i < yesNoFromArray.length; i++) {
+        addYesNo(yesNoTo, yesNoFromArray[i], weight);
+    }
+}
+
+
+const clumpGasPrices = (gasPriceToChances) => {
+    const gasPriceToChancesClumped = new Map();
+    const groupedByGwei = _.groupBy([...gasPriceToChances.entries()], ([gasPrice, yesNo]) => {
+        const match = gasPrice.match(gweiMatch);
+        if (!match) {
+            return "-1";
+        }
+        else {
+            return match[1];
+        }
+    });
+    Object.entries(groupedByGwei).forEach(([gwei, gasPriceToChancesArray]) => {
+        const wei = gwei + '000000000';
+        const baseYesNo = gasPriceToChancesArray.shift()[1];
+        addYesNoIterable(baseYesNo, gasPriceToChancesArray.map(([gasPrice, yesNo]) => yesNo), 1);
+        gasPriceToChancesClumped.set(wei, baseYesNo);
+    });
+    return gasPriceToChancesClumped;
+}
+
+
 // apply smoothing (add yes values from gas prices below, add no values from gas prices above) no order
 const smoothedGasPriceToChances = (gasPriceToChances) => {
     const gasPriceChancesSmoothedUnordered = new Map();
-
-    gasPriceToChances.forEach((valueI, keyI) => {
+    const clumpedGasPriceToChances = clumpGasPrices(gasPriceToChances);
+    clumpedGasPriceToChances.forEach((valueI, keyI) => {
         const bnGasPrice = new BigNumber(keyI);
         const yesNo = _.cloneDeep(valueI);
 
-        gasPriceToChances.forEach((valueJ, keyJ) => {
+        clumpedGasPriceToChances.forEach((valueJ, keyJ) => {
             if (keyJ === keyI) { return; }
             if (bnGasPrice.isGreaterThan(new BigNumber(keyJ))) {
-                Object.keys(valueJ.yes).forEach((key) => {
-                    yesNo.yes[key] += valueJ.yes[key];
-                });
+                addYes(yesNo.yes, valueJ.yes, 1);
             }
             else {
-                Object.keys(valueJ.no).forEach((key) => {
-                    yesNo.no[key] += valueJ.no[key];
-                });
+                addNo(yesNo.no, valueJ.no, 1);
             }
         });
         gasPriceChancesSmoothedUnordered.set(keyI, yesNo);
     });
 
     return gasPriceChancesSmoothedUnordered;
-}
-
-
-// apply smoothing (add yes values from gas prices below, add no values from gas prices above) and order
-const orderedSmoothedGasPriceToChances = (gasPriceToChances) => {
-    const gasPriceChancesSmoothedUnordered = smoothedGasPriceToChances(gasPriceToChances);
-
-    const gasPriceChancesSmoothedOrdered = new Map([...gasPriceChancesSmoothedUnordered].sort((a, b) => {
-        return (new BigNumber(a[0])).comparedTo(new BigNumber(b[0])); 
-    }));
-
-    return gasPriceChancesSmoothedOrdered;
 }
 
 
@@ -85,13 +116,7 @@ const summedOrderedSmoothedGasPricesToChances = (gasPriceToChancesArray) => {
                     no: defaultProbabiltyObject(DEPTH)
                 });
             }
-
-            Object.keys(yesNo.yes).forEach((key) => {
-                summedGasPricesToChances.get(gasPrice).yes[key] += yesNo.yes[key] * weight;
-            });
-            Object.keys(yesNo.no).forEach((key) => {
-                summedGasPricesToChances.get(gasPrice).no[key] += yesNo.no[key] * weight;
-            });
+            addYesNo(summedGasPricesToChances.get(gasPrice), yesNo, weight);
         });
     }
 
@@ -148,19 +173,8 @@ const gasAndTimeToChance = (gasPrice, inXBlocksOrLess) => {
 }
 
 
-web3.eth.getBlockNumber((error, blockNumber) => {
-    if (error || !blockNumber) {
-        throw new Error("initial block number not succesful");
-    }
-    lastBlockNumber = blockNumber;
-    firstBlockNumber = blockNumber;
-    locked = false;
-});
-
-
 // place pending transactions in maps with block number when they were sent, and their gas price
 web3.eth.subscribe('pendingTransactions', (error, tx_hash) => {
-    if (locked) { return; }
     if (error || !tx_hash) { return; }  // handle error here
     web3.eth.getTransaction(tx_hash, (error, tx_data) => {
         if (error || !tx_data) { return; }  //handle error here
@@ -187,11 +201,10 @@ web3.eth.subscribe('pendingTransactions', (error, tx_hash) => {
 
 
 web3.eth.subscribe('newBlockHeaders', (error, blockHeader) => {
-    if (locked) { return; }
     if (error || !blockHeader) { return; }  // handle error here
 
-    lastBlockNumber = blockHeader.number;
-    const thisBlockNumber = blockHeader.number;  // copy blocknumber to const so new event fire won't mess calculations of prev event fire mid calc
+    lastBlockNumber += 1;
+    const thisBlockNumber = lastBlockNumber;  // copy blocknumber to const so new event fire won't mess calculations of prev event fire mid calc
 
     web3.eth.getBlock(blockHeader.hash, (error, blockData) => {
         if (error || !blockData) { return; }  // handle error here
@@ -199,7 +212,7 @@ web3.eth.subscribe('newBlockHeaders', (error, blockHeader) => {
         const blockTransactions = new Set(blockData.transactions);
         
 
-        // iterate over 10 blocks before this
+        // iterate over DEPTH blocks before this
         for (let i = 1; i < DEPTH + 1; i++) {
             // break if no data about block
             if (!blockToPendingTxHash.has(thisBlockNumber - i)) { break; }
@@ -240,7 +253,7 @@ web3.eth.subscribe('newBlockHeaders', (error, blockHeader) => {
             console.log(gasAndTimeToChance('35000000000', 3));
         }
         catch (error) {
-            console.log('lol no worries');
+            console.log(error);
         }
     });
 });
