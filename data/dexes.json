@@ -29,22 +29,22 @@
     },
     "JETSWAP": {
         "name": "JETSWAP",
-        "router": "0x668ad0ed2622c62e24f0d5ab6b6ac1b9d2cd4ac7",
-        "factory": "0x668ad0ed2622c62e24f0d5ab6b6ac1b9d2cd4ac7",
+        "router": "0x5C6EC38fb0e2609672BDf628B1fD605A523E5923",
+        "factory": "0x668ad0ed2622C62E24f0d5ab6B6Ac1b9D2cD4AC7",
         "a": 999,
         "b": 1000
     },
     "CAFESWAP": {
         "name": "CAFESWAP",
         "router": "0x9055682E58C74fc8DdBFC55Ad2428aB1F96098Fc",
-        "factory": "0x5ede3f4e7203bf1f12d57af1810448e5db20f46c",
+        "factory": "0x5eDe3f4e7203Bf1F12d57aF1810448E5dB20f46C",
         "a": 998,
         "b": 1000
     },
     "POLYCAT": {
         "name": "POLYCAT",
         "router": "0x94930a328162957FF1dd48900aF67B5439336cBD",
-        "factory": "0x477ce834ae6b7ab003cce4bc4d8697763ff456fa",
+        "factory": "0x477Ce834Ae6b7aB003cCe4BC4d8697763FF456FA",
         "a": 9976,
         "b": 10000
     }

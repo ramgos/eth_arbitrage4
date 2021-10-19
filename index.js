@@ -6,7 +6,7 @@ const redisClient = redis.createClient({
     port: 6379
 });
 
-const {Queue} = require('node-resque');
+const {Queue, Worker} = require('node-resque');
 
 const pairABI = require('./data/SushiPairABI.json');
 const dexes = require('./data/dexes.json');
@@ -20,10 +20,7 @@ const extraMath = require('./extramath.js');
 const web3 = new Web3(config.WSS_RPC);
 const primaryToken = consts.WMATIC;
 
-const {connectionDetails, jobs, queueName} = require('./nodeResqueConfig.js');
-
-
-// right now no support for different fees amongst uniswap dexes
+const {connectionDetails, queueName} = require('./nodeResqueConfig.js');
 
 
 const ReservePairData = (originalPairData) => {
@@ -61,6 +58,55 @@ const VirtualReservePairData = (reservePairData) => {
 
 
 const Main = async () => {
+    // arb sender code
+    const jobs = {
+        arb: {
+            perform: async ({
+                amount,
+                token0,
+                token1,
+                pairAddress0,
+                pairAddress0Hash,
+                pairAddress1,
+                pairAddress1Hash,
+                router0,
+                router1,
+                dexName0,
+                dexName1
+            }) => {
+                console.log({
+                    amount,
+                    token0,
+                    token1,
+                    pairAddress0,
+                    pairAddress0Hash,
+                    pairAddress1,
+                    pairAddress1Hash,
+                    router0,
+                    router1,
+                    dexName0,
+                    dexName1});
+            }
+        }
+    }
+
+    const worker = new Worker(
+        { connection: connectionDetails, queues: [queueName] },
+        jobs
+    );
+
+    await worker.connect();
+    worker.start();
+
+    worker.on("failure", (queue, job, failure, duration) => {
+        console.log(failure);
+    });
+    worker.on("error", (error) => {
+        console.log(error);
+    });
+
+    // setup queue
+
     const queue = new Queue({ connection: connectionDetails }, jobs);
     queue.on("error", function (error) {
         console.log(error);
@@ -103,22 +149,23 @@ const Main = async () => {
     }
 
 
+    // check if profit, if yes append to queue
     const CheckArbOneWay = async (pairAddress0, pairAddress1) => {
         const vPairReserveData0 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress0));
         const vPairReserveData1 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress1));
 
         const vPair0DexData = pairAddressToDexData.get(pairAddress0);
-        const vPair1DexData = pairAddressToDexData.get(pairAddress0);
+        const vPair1DexData = pairAddressToDexData.get(pairAddress1);
 
         const optimalAmount = extraMath.ceil(arbMath.getOptimalAmount(
             vPairReserveData0.reserve0, 
             vPairReserveData0.reserve1,
             vPairReserveData1.reserve0,
             vPairReserveData1.reserve1,
-            vPair0DexData.a,
-            vPair0DexData.b,
-            vPair1DexData.a,
-            vPair1DexData.b
+            new BigNumber(vPair0DexData.a),
+            new BigNumber(vPair0DexData.b),
+            new BigNumber(vPair1DexData.a),
+            new BigNumber(vPair1DexData.b)
         ));
 
         if (optimalAmount.isGreaterThanOrEqualTo(new BigNumber(1))) {
@@ -132,12 +179,14 @@ const Main = async () => {
                 pairAddress1Hash: vPairReserveData1.latestHash,
                 router0: pairAddressToDexData.get(pairAddress0).router,
                 router1: pairAddressToDexData.get(pairAddress1).router,
+                dexName0: pairAddressToDexData.get(pairAddress0).name,
+                dexName1: pairAddressToDexData.get(pairAddress1).name,
             }]);
         }
     }
 
 
-    // main
+    // check arb opportuinites whenever a swap happens in any one of the dex contracts
     web3.eth.subscribe('logs', {
         address: Array.from(pairAddressToGroupId.keys()), 
         topics: ['0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1']  // signature of sync event
