@@ -85,7 +85,7 @@ Object.entries(tokens).forEach(([id, tokenPairs]) => {
 //#endregion
 
 // check if profit, send transaction if yes
-const CheckArbOneWay = (pairAddress0, pairAddress1) => {
+const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
     const vPairReserveData0 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress0));
     const vPairReserveData1 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress1));
 
@@ -126,7 +126,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1) => {
             router1: pairAddressToDexData.get(pairAddress1).router,
             dexName0: pairAddressToDexData.get(pairAddress0).name,
             dexName1: pairAddressToDexData.get(pairAddress1).name,
-            timestamp: Date.now()
+            timestamp: startTimestamp,
         };
 
         console.log(args);
@@ -139,6 +139,8 @@ web3.eth.subscribe('logs', {
     address: Array.from(pairAddressToGroupId.keys()), 
     topics: ['0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1']  // signature of sync event
 }, (error, syncEvent) => {
+    const now = Date.now();
+
     if (!error) {
         const pairAddress = syncEvent.address;
 
@@ -175,8 +177,8 @@ web3.eth.subscribe('logs', {
                     });
                 }
 
-                CheckArbOneWay(pairAddress, otherPairAddress),
-                CheckArbOneWay(otherPairAddress, pairAddress)
+                CheckArbOneWay(pairAddress, otherPairAddress, now),
+                CheckArbOneWay(otherPairAddress, pairAddress, now)
             });
         }
     }
