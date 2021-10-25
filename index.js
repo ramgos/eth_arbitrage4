@@ -22,6 +22,8 @@ const primaryToken = consts.WMATIC;
 
 const {connectionDetails, queueName} = require('./nodeResqueConfig.js');
 
+const pairAddressToLatestHash = new Map();
+
 
 const ReservePairData = (originalPairData) => {
     return {
@@ -44,10 +46,7 @@ const VirtualReservePairData = (reservePairData) => {
     }
     else {
         return {
-            hasReserveData: reservePairData.hasReserveData,
-
-            pairAddress: reservePairData.pairAddress,
-            latestHash: reservePairData.latestHash,
+            ...reservePairData,
             token0: reservePairData.token1,
             token1: reservePairData.token0,
             reserve0: reservePairData.reserve1,
@@ -63,6 +62,7 @@ const Main = async () => {
         arb: {
             perform: async ({
                 amount,
+                grosspay,
                 token0,
                 token1,
                 pairAddress0,
@@ -72,20 +72,42 @@ const Main = async () => {
                 router0,
                 router1,
                 dexName0,
-                dexName1
+                dexName1,
+                timestamp
             }) => {
-                console.log({
-                    amount,
-                    token0,
-                    token1,
-                    pairAddress0,
-                    pairAddress0Hash,
-                    pairAddress1,
-                    pairAddress1Hash,
-                    router0,
-                    router1,
-                    dexName0,
-                    dexName1});
+                
+                const now = Date.now();
+                if (now - timestamp > consts.EXPIRY) {
+                    console.log(`old: ${now - timestamp}`);
+                    return;
+                } 
+                
+                const latestHash0 = pairAddressToLatestHash.has(pairAddress0) ? pairAddressToLatestHash.get(pairAddress0) : '0';
+                const latestHash1 = pairAddressToLatestHash.has(pairAddress1) ? pairAddressToLatestHash.get(pairAddress1) : '0';
+
+                if (latestHash0 === pairAddress0Hash && latestHash1 === pairAddress1Hash) {
+                    console.log("hashes are valid");
+                    console.log({
+                        amount,
+                        grosspay,
+                        token0,
+                        token1,
+                        pairAddress0,
+                        pairAddress0Hash,
+                        pairAddress1,
+                        pairAddress1Hash,
+                        router0,
+                        router1,
+                        dexName0,
+                        dexName1,
+                        timestamp
+                    });
+                }
+                else {
+                    console.log("hashes have updated");
+                }
+
+                console.log(`time passed: ${Date.now() - now}`);
             }
         }
     }
@@ -97,7 +119,7 @@ const Main = async () => {
 
     await worker.connect();
     worker.start();
-
+    
     worker.on("failure", (queue, job, failure, duration) => {
         console.log(failure);
     });
@@ -135,7 +157,7 @@ const Main = async () => {
 
     // update reserve data in map
     const UpdatePairReservesData = async (pairAddress, latestHash, reserve0, reserve1, token0, token1) => {
-        await redisClient.set(pairAddress, latestHash);
+        pairAddressToLatestHash.set(pairAddress, latestHash);
         pairAddressToReserveData.set(pairAddress, {
             hasReserveData: true,
 
@@ -168,9 +190,21 @@ const Main = async () => {
             new BigNumber(vPair1DexData.b)
         ));
 
+        const grosspay = extraMath.ceil(arbMath.getMaxArbReturn(
+            vPairReserveData0.reserve0, 
+            vPairReserveData0.reserve1,
+            vPairReserveData1.reserve0,
+            vPairReserveData1.reserve1,
+            new BigNumber(vPair0DexData.a),
+            new BigNumber(vPair0DexData.b),
+            new BigNumber(vPair1DexData.a),
+            new BigNumber(vPair1DexData.b)
+        ));
+
         if (optimalAmount.isGreaterThanOrEqualTo(new BigNumber(1))) {
             await queue.enqueue(queueName, 'arb', [{
                 amount: optimalAmount.toString(10),
+                grosspay: grosspay,
                 token0: vPairReserveData0.token0.address,
                 token1: vPairReserveData0.token1.address,
                 pairAddress0: pairAddress0,
@@ -181,6 +215,7 @@ const Main = async () => {
                 router1: pairAddressToDexData.get(pairAddress1).router,
                 dexName0: pairAddressToDexData.get(pairAddress0).name,
                 dexName1: pairAddressToDexData.get(pairAddress1).name,
+                timestamp: Date.now()
             }]);
         }
     }
@@ -219,7 +254,7 @@ const Main = async () => {
                                 // convert BN to BigNumber and update reserve data
 
                                 const [otherReserve0, otherReserve1] = [new BigNumber(reserveData._reserve0.toString()), new BigNumber(reserveData._reserve1.toString())];
-                                await UpdatePairReservesData(otherPairAddress, 0, otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
+                                await UpdatePairReservesData(otherPairAddress, '0', otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
                                 
                                 await Promise.all([
                                     CheckArbOneWay(pairAddress, otherPairAddress),

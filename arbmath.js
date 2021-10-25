@@ -43,7 +43,7 @@ const getOptimalAmount = (reserve_from0, reserve_to0, reserve_from1, reserve_to1
 
 
 const getMaxArbReturn = (reserve_from0, reserve_to0, reserve_from1, reserve_to1, a1=defaultFeeNumerator, b1=defaultFeeDenominator, a2=defaultFeeNumerator, b2=defaultFeeDenominator) => {
-    if (!isInputValid([reserve_from0, reserve_to0, reserve_from1, reserve_to1, a, b])) {throw new Error("ARB MATH: Invalid Input");}
+    if (!isInputValid([reserve_from0, reserve_to0, reserve_from1, reserve_to1, a1, a2, b1, b2])) {throw new Error("ARB MATH: Invalid Input");}
 
     const optimalAmount = getOptimalAmount(reserve_from0, reserve_to0, reserve_from1, reserve_to1, a1, b1, a2, b2);
     return getArbRetrun(reserve_from0, reserve_to0, reserve_from1, reserve_to1, optimalAmount, a1, b1, a2, b2);
