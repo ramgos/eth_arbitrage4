@@ -1,7 +1,11 @@
 const Web3 = require('web3');
 const BigNumber = require('bignumber.js');
+const { cloneDeep } = require('lodash');
 
 const pairABI = require('./data/SushiPairABI.json');
+const arbitrageABI = require('./data/ArbitrageABI.json');
+const erc20ABI = require('./data/ERC20ABI.json');
+
 const dexes = require('./data/dexes.json');
 const consts = require('./data/consts.json');
 const config = require('./data/config.json');
@@ -9,9 +13,12 @@ const tokens = require('./data/tokens.json');
 
 const arbMath = require('./arbmath.js');
 const extraMath = require('./extramath.js');
+const { GasPriceProvider } = require('./gascalculator');
 
 const web3 = new Web3(config.WSS_RPC);
 const primaryToken = consts.WMATIC;
+const gasPriceProvider = new GasPriceProvider();
+const senderAccount = web3.eth.accounts.privateKeyToAccount(config.PRIVATE_KEY);
 
 
 const ReservePairData = (originalPairData) => {
@@ -113,7 +120,8 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
     ));
 
     if (optimalAmount.isGreaterThanOrEqualTo(new BigNumber(1))) {
-        const args = {
+        // use clonedeep so data doesn't reference map values
+        const args = cloneDeep({
             amount: optimalAmount.toString(10),
             grosspay: grosspay.toString(10),
             token0: vPairReserveData0.token0.address,
@@ -127,9 +135,92 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
             dexName0: pairAddressToDexData.get(pairAddress0).name,
             dexName1: pairAddressToDexData.get(pairAddress1).name,
             timestamp: startTimestamp,
-        };
+        });
 
-        console.log(args);
+        // check that there is enought input token in arbitrage contract
+        const inputTokenContract = new web3.eth.Contract(erc20ABI, args.token0);
+        inputTokenContract.methods.balanceOf(config.CONTRACT_ADDRESS).call((error, inputTokenBalance) => {
+            if (error) { console.log(error); return; }
+            
+            const inputTokenBalanceBN = new BigNumber(inputTokenBalance.toString(10));  // convert BN to BigNumber
+            const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
+            const profit = (new BigNumber(args.grosspay)).minus(args.amount);
+
+            if (profit.lt(new BigNumber(0))) {
+                console.log(`unprofitable oppurtunity slipped - args:  ${args}`);
+                return ;
+            }
+
+            // calculate what portion of profit goes towards gas price
+            const totalGasPrice = extraMath.ceil(profit.times(gasPrecentBN));
+            
+            // check if has enough balance to make transaction
+            if ((new BigNumber(args.amount)).lte(inputTokenBalanceBN)) {
+                const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
+                gasPriceProvider.getGasPrice((acceptableGasPrice) => {
+                        const deadline = Date.now() + consts.DEADLINE;
+                        const rawArbTransactionData = arbContract.methods.doubleSwap(args.amount, args.router0, args.router1, args.token1, deadline).encodeABI();
+                        
+                        const preGasEstimateTransaction = {
+                            from: senderAccount.address,
+                            to: arbContract.options.address,
+                            data: rawArbTransactionData,
+                        }
+
+                        web3.eth.estimateGas(preGasEstimateTransaction, (error, estimatedGas) => {
+                            if (error) { console.log(error); return; }  // supposed to fail - gas estimation serves as check that transaction is feasiable
+
+                            const estimatedGasBN = new BigNumber(estimatedGas);
+                            const gasBufferBN = new BigNumber(consts.GAS_OVERESTIMATE);
+                            const acceptableGasPriceBN = new BigNumber(acceptableGasPrice.toString(10));  // convert from BN to BigNumber
+                            const totalGas = extraMath.ceil(estimatedGasBN.times(gasBufferBN));  // gas limit
+                            const gasPrice = extraMath.floor(totalGasPrice.div(totalGas));  // gas price per unit
+
+                            if (gasPrice.gte(acceptableGasPriceBN)) {
+                                postGasEstimateTransaction = {
+                                    from: senderAccount.address,
+                                    to: arbContract.options.address,
+                                    data: rawArbTransactionData,
+                                    gas: totalGas,
+                                    gasPrice: gasPrice
+                                }
+
+                                web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
+                                    if (error) { console.log(error); return; }
+                                    const pairAddress0LatestHash = pairAddressToLatestHash.get(args.pairAddress0);
+                                    const pairAddress1LatestHash = pairAddressToLatestHash.get(args.pairAddress1);
+
+                                    console.log([pairAddress0LatestHash, args.pairAddress0Hash, pairAddress1LatestHash, args.pairAddress1Hash]);
+                                    if (pairAddress0LatestHash === args.pairAddress0Hash && pairAddress1LatestHash === args.pairAddress1Hash) {
+                                        const now = Date.now()
+                                        const delay = now - args.timestamp;
+                                        if (delay > consts.EXPIRY) {
+                                            console.log(`too slow: ${delay}`);
+                                        }
+                                        else {
+                                            web3.eth.sendSignedTransaction(signedTxn.rawTransaction)
+                                                .on('transactionHash', (transactionHash) => {
+                                                    console.log(`transaction hash: ${transactionHash}`);
+                                                })
+                                                .on('receipt', (transactionReceipt) => {
+                                                    console.log(`transaction receipt: ${transactionReceipt}`);
+                                                })
+                                                .on('confirmation', (confirmationNumber, receipt) => {
+                                                    console.log(`confirmation number: ${confirmationNumber}`);
+                                                })
+                                                .on('error', console.error);
+                                        }
+                                    }
+                                    else {
+                                        console.log('hashes changed');
+                                    }
+                                });
+                            }
+                        });
+                    }
+                );
+            }
+        });
     }
 }
 
@@ -168,7 +259,7 @@ web3.eth.subscribe('logs', {
                         if (!error && reserveData._reserve0 && reserveData._reserve1) {
                             // convert BN to BigNumber and update reserve data
 
-                            const [otherReserve0, otherReserve1] = [new BigNumber(reserveData._reserve0.toString()), new BigNumber(reserveData._reserve1.toString())];
+                            const [otherReserve0, otherReserve1] = [new BigNumber(reserveData._reserve0.toString(10)), new BigNumber(reserveData._reserve1.toString(10))];
                             UpdatePairReservesData(otherPairAddress, '0', otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
                         }
                         else {

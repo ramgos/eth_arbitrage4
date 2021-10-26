@@ -61,11 +61,11 @@ class GasPriceProvider {
     getGasPrice(callback) {
         const delay = Date.now() - this.lastCalled 
         if (delay < this.throttle) {
-            console.log(`delay: ${delay}`);
+            // console.log(`delay: ${delay}`);
             callback(this.lastGasPrice);
         }
         else {
-            console.log('noble:');
+            // console.log('noble:');
             getGasPrice((gasPrice) => {
                 this.lastCalled = Date.now();
                 this.lastGasPrice = gasPrice;
