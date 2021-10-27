@@ -56,21 +56,32 @@ class GasPriceProvider {
         this.acceptablePrecentile = consts.ACCEPTABLE_PRECENTILE;
         this.lastGasPrice = 0;
         this.lastCalled = 0;
+        this.isWorkingNow = false;
+        this.callbackQueue = new Array();
     }
 
     getGasPrice(callback) {
-        const delay = Date.now() - this.lastCalled 
-        if (delay < this.throttle) {
-            // console.log(`delay: ${delay}`);
-            callback(this.lastGasPrice);
+        if (this.isWorkingNow) {
+            this.callbackQueue.push(callback);
         }
         else {
-            // console.log('noble:');
-            getGasPrice((gasPrice) => {
-                this.lastCalled = Date.now();
-                this.lastGasPrice = gasPrice;
-                callback(gasPrice);
-            }, this.acceptablePrecentile, this.sampleSize);
+            const delay = Date.now() - this.lastCalled 
+            if (delay < this.throttle) {
+                callback(this.lastGasPrice);
+            }
+            else {
+                this.callbackQueue.push(callback);
+                this.isWorkingNow = true;
+                getGasPrice((gasPrice) => {
+                    this.lastCalled = Date.now();
+                    this.lastGasPrice = gasPrice;
+                    
+                    this.callbackQueue.forEach(pendingCallback => pendingCallback(gasPrice));
+                    this.callbackQueue = new Array();
+                    this.isWorkingNow = false;
+                    
+                }, this.acceptablePrecentile, this.sampleSize);
+            }
         }
     }
 }
