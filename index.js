@@ -3,7 +3,7 @@ const BigNumber = require('bignumber.js');
 const { cloneDeep } = require('lodash');
 
 const pairABI = require('./data/SushiPairABI.json');
-const arbitrageABI = require('./data/ArbitrageABI.json');
+const arbitrageABI = require('./data/Arbitrage2ABI.json');
 const erc20ABI = require('./data/ERC20ABI.json');
 
 const dexes = require('./data/dexes.json');
@@ -110,7 +110,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
         a1, b1
     ));
 
-    const grosspay = extraMath.ceil(arbMath.getMaxArbReturn(
+    const grossPay = extraMath.ceil(arbMath.getMaxArbReturn(
         vPairReserveData0.reserve0, 
         vPairReserveData0.reserve1,
         vPairReserveData1.reserve0,
@@ -119,11 +119,18 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
         a1, b1
     ));
 
+    const swap0ResultWeighted = extraMath.ceil(arbMath.getPoolReturn(
+        vPairReserveData0.reserve0, 
+        vPairReserveData0.reserve1,
+        optimalAmount,
+        a0, b0
+    ).times(new BigNumber(consts.MIN_OUTPUT_FACOTR)));
+
     if (optimalAmount.isGreaterThanOrEqualTo(new BigNumber(1))) {
         // use clonedeep so data doesn't reference map values
         const args = cloneDeep({
             amount: optimalAmount.toString(10),
-            grosspay: grosspay.toString(10),
+            grossPay: grossPay.toString(10),
             token0: vPairReserveData0.token0.address,
             token1: vPairReserveData0.token1.address,
             pairAddress0: pairAddress0,
@@ -144,22 +151,43 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
             
             const inputTokenBalanceBN = new BigNumber(inputTokenBalance.toString(10));  // convert BN to BigNumber
             const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
-            const profit = (new BigNumber(args.grosspay)).minus(args.amount);
+            const grossProfit = (new BigNumber(args.grossPay)).minus(args.amount);
 
-            if (profit.lt(new BigNumber(0))) {
-                console.log(`unprofitable oppurtunity slipped - args:  ${args}`);
+            if (grossProfit.lt(new BigNumber(0))) {
+                console.log(`impossible oppurtunity slipped - args:  ${args}`);
                 return ;
             }
 
             // calculate what portion of profit goes towards gas price
-            const totalGasPrice = extraMath.ceil(profit.times(gasPrecentBN));
+            const totalGasPrice = extraMath.ceil(grossProfit.times(gasPrecentBN));
+
+            if (totalGasPrice.gt(new BigNumber(consts.MAX_GAS_PRICE))) {
+                console.log('too risky gas price');
+                return;
+            }
+
+            /*
+            In future, account for netProfit and potentailLost in decsiding whether to send a transaction instead of MAX GAS PRICE
+
+            const netProfit = grossProfit.minus(totalGasPrice);
+            const potentailLost = totalGasPrice;
+            */
             
             // check if has enough balance to make transaction
             if ((new BigNumber(args.amount)).lte(inputTokenBalanceBN)) {
                 const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
+                // estimate gas price
                 gasPriceProvider.getGasPrice((acceptableGasPrice) => {
-                        const deadline = Date.now() + consts.DEADLINE;
-                        const rawArbTransactionData = arbContract.methods.doubleSwap(args.amount, args.router0, args.router1, args.token1, deadline).encodeABI();
+                        const deadline = Math.floor(Date.now() / 1000) + consts.DEADLINE;
+                        const rawArbTransactionData = arbContract.methods.doubleSwap(
+                                args.token0,
+                                args.token1,
+                                args.router0, 
+                                args.router1, 
+                                args.amount,
+                                swap0ResultWeighted,
+                                deadline
+                            ).encodeABI();
                         
                         const preGasEstimateTransaction = {
                             from: senderAccount.address,
@@ -167,6 +195,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                             data: rawArbTransactionData,
                         }
 
+                        // estimate gas unit count
                         web3.eth.estimateGas(preGasEstimateTransaction, (error, estimatedGas) => {
                             if (error) { console.log(error); return; }  // supposed to fail - gas estimation serves as check that transaction is feasiable
 
