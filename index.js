@@ -150,13 +150,22 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
             if (error) { console.log(error); return; }
             
             const inputTokenBalanceBN = new BigNumber(inputTokenBalance.toString(10));  // convert BN to BigNumber
-            const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
+            // const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
             const grossProfit = (new BigNumber(args.grossPay)).minus(args.amount);
 
             if (grossProfit.lt(new BigNumber(0))) {
                 console.log(`impossible oppurtunity slipped - args:  ${args}`);
                 return ;
             }
+
+            /*
+
+            2/11/2021 NOTES
+
+            Changing startegy - even though increasing gas costs makes it more likely that
+            a transaction will pass, it poses more risk to lose money
+
+            now use weighted comparision
 
             // calculate what portion of profit goes towards gas price
             const totalGasPrice = extraMath.ceil(grossProfit.times(gasPrecentBN));
@@ -165,6 +174,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                 console.log('too risky gas price');
                 return;
             }
+            */
 
             /*
             In future, account for netProfit and potentailLost in decsiding whether to send a transaction instead of MAX GAS PRICE
@@ -199,13 +209,22 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                         web3.eth.estimateGas(preGasEstimateTransaction, (error, estimatedGas) => {
                             if (error) { console.log(error); return; }  // supposed to fail - gas estimation serves as check that transaction is feasiable
 
+                            const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
+
                             const estimatedGasBN = new BigNumber(estimatedGas);
                             const gasBufferBN = new BigNumber(consts.GAS_OVERESTIMATE);
-                            const acceptableGasPriceBN = new BigNumber(acceptableGasPrice.toString(10));  // convert from BN to BigNumber
                             const totalGas = extraMath.ceil(estimatedGasBN.times(gasBufferBN));  // gas limit
+
+                            const acceptableGasPriceBN = new BigNumber(acceptableGasPrice.toString(10));  // convert from BN to BigNumber
+                            const totalGasPrice = totalGas.times(acceptableGasPriceBN);
                             const gasPrice = extraMath.floor(totalGasPrice.div(totalGas));  // gas price per unit
 
-                            if (gasPrice.gte(acceptableGasPriceBN)) {
+                            if (totalGasPrice.gt(new BigNumber(consts.MAX_GAS_PRICE))) {
+                                console.log('too risky gas price');
+                                return;
+                            }
+
+                            if (grossProfit.times(gasPrecentBN).gt(totalGasPrice)) {
                                 postGasEstimateTransaction = {
                                     from: senderAccount.address,
                                     to: arbContract.options.address,
