@@ -169,7 +169,9 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
             // check if has enough balance to make transaction
             if ((new BigNumber(args.amount)).lte(inputTokenBalanceBN)) {
                 const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
-                web3.eth.getTransactionCount((error, nonce) => {
+                // get nonce
+                web3.eth.getTransactionCount(senderAccount.address, (error, nonce) => {
+                    if (error) { console.log(error); return; }
                     // estimate gas price
                     gasPriceProvider.getGasPrice((acceptableGasPrice) => {
                         const deadline = Math.floor(Date.now() / 1000) + consts.DEADLINE;
