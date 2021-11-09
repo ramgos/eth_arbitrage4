@@ -245,23 +245,16 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                     cancelledOrCompleted = true;
                                                 });
 
-                                                const checks = consts.checks;
-                                                const checkingDelay = consts.CHECKING_DELAY;
-                                                for (let i = 0; i < checks; i ++) {
-                                                    // check 'checks' time whether transaction should be cancelled
-                                                    setTimeout(() => {
-                                                        if (cancelledOrCompleted) {
-                                                            return;
-                                                        }
-                                                        const pairAddress0LatestHashUpdated = pairAddressToLatestHash.get(args.pairAddress0);
-                                                        const pairAddress1LatestHashUpdated = pairAddressToLatestHash.get(args.pairAddress1); 
-        
-                                                        if (!(pairAddress0LatestHashUpdated === args.pairAddress0Hash && pairAddress1LatestHashUpdated === args.pairAddress1Hash)) {
-                                                            cancelledOrCompleted = true;
-                                                            console.log(`hashes changed after ${checkingDelay * (i+1)}`);
-        
-                                                            const cancelGaspriceBN = new BigNumber(consts.CANCEL_GASPRICE); 
-        
+                                            const checks = consts.checks;
+                                            const checkingDelay = consts.CHECKING_DELAY;
+                                            for (let i = 0; i < checks; i ++) {
+                                                // check 'checks' time whether transaction should be cancelled
+                                                setTimeout(() => {
+                                                    if (cancelledOrCompleted) {
+                                                        return;
+                                                    }
+                                                    web3.eth.estimateGas(postGasEstimateTransaction, (error, secondaryEstimatedGas) => {
+                                                        if (error) {
                                                             // IMPORTANT NOTICE
                                                             /*
                                                             *  This solution assumes no other arbitrage transactions with the same nonce 
@@ -274,13 +267,15 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                             *  For now, for the sake of simplicity there will be no keeping track of
                                                             *  Other transactions sent with the same nonce
                                                             */
+                                                            cancelledOrCompleted = true;
                                                             web3.eth.sendTransaction({
                                                                 gasPrice: gasPriceBN.times(cancelGaspriceBN).toString(10),
                                                                 nonce: nonce
                                                             });
                                                         }
-                                                    }, checkingDelay * (i + 1));
-                                                }
+                                                    });
+                                                }, checkingDelay * (i + 1));
+                                            }
                                         }
                                     }
                                     else {
