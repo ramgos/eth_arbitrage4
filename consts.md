@@ -12,3 +12,6 @@ DEADLINE (ms) - deadline for arb transaction after sending, handled in the contr
 MIN_OUTPUT_FACTOR (precentage) - how much to multiply the result of the first swap and require it to be the min output in first swap in
                     function call (i.e account for slippage in first swap)
 MAX_GAS_PRICE - if total gas cost is bigger than MAX_GAS_PRICE, don't continue calculation
+CHECKING_DELAY (ms) - how many milliseconds to wait before checking if hashes updated? (after sending transaction)
+CANCEL_GASPRICE (precentage) by what precentage to overpay in order to cancel the transaction
+CHECKS - how many times to check whether the transaction should be cancelled
