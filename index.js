@@ -268,9 +268,9 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                             *  Other transactions sent with the same nonce
                                                             */
                                                             cancelledOrCompleted = true;
-                                                            web3.eth.sendTransaction({
-                                                                gasPrice: gasPriceBN.times(cancelGaspriceBN).toString(10),
-                                                                nonce: nonce
+                                                            web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedCanceled) => {
+                                                                if (error) { console.log(error); return; }
+                                                                web3.eth.sendSignedTransaction(signedCanceled);
                                                             });
                                                         }
                                                     });
