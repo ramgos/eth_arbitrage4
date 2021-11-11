@@ -222,7 +222,6 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                     const pairAddress0LatestHash = pairAddressToLatestHash.get(args.pairAddress0);
                                     const pairAddress1LatestHash = pairAddressToLatestHash.get(args.pairAddress1);
 
-                                    console.log([pairAddress0LatestHash, args.pairAddress0Hash, pairAddress1LatestHash, args.pairAddress1Hash]);
                                     if (pairAddress0LatestHash === args.pairAddress0Hash && pairAddress1LatestHash === args.pairAddress1Hash) {
                                         const now = Date.now()
                                         const delay = now - args.timestamp;
@@ -261,7 +260,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                                     */
                                                                     cancelledOrCompleted = true;
                                                                     web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedCanceled) => {
-                                                                        if (error) { console.log(error); return; }
+                                                                        if (error) { logger.error(error, {args}); return; }
                                                                         web3.eth.sendSignedTransaction(signedCanceled);
                                                                     });
                                                                 }
@@ -281,7 +280,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                         }
                                     }
                                     else {
-                                        console.log('hashes changed');
+                                        logger.warn('hashes changed', {args});
                                     }
                                 });
                             }
@@ -332,7 +331,7 @@ web3.eth.subscribe('logs', {
                             UpdatePairReservesData(otherPairAddress, '0', otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
                         }
                         else {
-                            console.log(error);
+                            logger.error(error);
                         }
                     });
                 }
@@ -343,6 +342,6 @@ web3.eth.subscribe('logs', {
         }
     }
     else {
-        console.log(error);
+        logger.log(error);
     }
 });
