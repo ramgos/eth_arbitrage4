@@ -14,6 +14,7 @@ const tokens = require('./data/tokens.json');
 const arbMath = require('./arbmath.js');
 const extraMath = require('./extramath.js');
 const { GasPriceProvider } = require('./gascalculator');
+const { logger } = require('./logger.js');
 
 const web3 = new Web3(config.WSS_RPC);
 const primaryToken = consts.WMATIC;
@@ -147,14 +148,14 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
         // check that there is enought input token in arbitrage contract
         const inputTokenContract = new web3.eth.Contract(erc20ABI, args.token0);
         inputTokenContract.methods.balanceOf(config.CONTRACT_ADDRESS).call((error, inputTokenBalance) => {
-            if (error) { console.log(error); return; }
+            if (error) { logger.error(error, {args}); return; }
             
             const inputTokenBalanceBN = new BigNumber(inputTokenBalance.toString(10));  // convert BN to BigNumber
             const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
             const grossProfitBN = (new BigNumber(args.grossPay)).minus(args.amount);
 
             if (grossProfitBN.lt(new BigNumber(0))) {
-                console.log(`impossible oppurtunity slipped - args:  ${args}`);
+                logger.warn(`impossible oppurtunity slipped`, {args});
                 return ;
             }
 
@@ -162,7 +163,11 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
             const totalGasPriceBN = extraMath.ceil(grossProfitBN.times(gasPrecentBN));
 
             if (totalGasPriceBN.gt(new BigNumber(consts.MAX_GAS_PRICE))) {
-                console.log('too risky gas price');
+                logger.debug('too risky gas price', {
+                    args,
+                    grossProfit: grossProfitBN.toString(10),
+                    gasPrecent: gasPrecentBN.toString(10)
+                });
                 return;
             }
 
@@ -171,7 +176,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                 const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
                 // get nonce
                 web3.eth.getTransactionCount(senderAccount.address, (error, nonce) => {
-                    if (error) { console.log(error); return; }
+                    if (error) { logger.error(error, {args}); return; }
                     // estimate gas price
                     gasPriceProvider.getGasPrice((acceptableGasPrice) => {
                         const deadline = Math.floor(Date.now() / 1000) + consts.DEADLINE;
@@ -194,7 +199,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
 
                         // estimate gas unit count
                         web3.eth.estimateGas(preGasEstimateTransaction, (error, estimatedGas) => {
-                            if (error) { console.log(error); return; }  // supposed to fail - gas estimation serves as check that transaction is feasiable
+                            if (error) { /*logger.error(error);*/ return; }  // supposed to fail - gas estimation serves as check that transaction is feasiable
 
                             const estimatedGasBN = new BigNumber(estimatedGas);
                             const gasBufferBN = new BigNumber(consts.GAS_OVERESTIMATE);
@@ -213,7 +218,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                 }
 
                                 web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
-                                    if (error) { console.log(error); return; }
+                                    if (error) { logger.error(error, {args}); return; }
                                     const pairAddress0LatestHash = pairAddressToLatestHash.get(args.pairAddress0);
                                     const pairAddress1LatestHash = pairAddressToLatestHash.get(args.pairAddress1);
 
@@ -222,7 +227,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                         const now = Date.now()
                                         const delay = now - args.timestamp;
                                         if (delay > consts.EXPIRY) {
-                                            console.log(`too slow: ${delay}`);
+                                            logger.warn(`too slow: ${delay}`, {args});
                                         }
                                         else {
 
@@ -230,52 +235,49 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
 
                                             web3.eth.sendSignedTransaction(signedTxn.rawTransaction)
                                                 .on('transactionHash', (transactionHash) => {
-                                                    console.log(`transaction hash: ${transactionHash}`);
+                                                    logger.info(`transaction hash: ${transactionHash}`);
+                                                    const checks = consts.checks;
+                                                    const checkingDelay = consts.CHECKING_DELAY;
+                                                    for (let i = 0; i < checks; i ++) {
+                                                        // check 'checks' time whether transaction should be cancelled
+                                                        setTimeout(() => {
+                                                            if (cancelledOrCompleted) {
+                                                                return;
+                                                            }
+                                                            web3.eth.estimateGas(postGasEstimateTransaction, (error) => {
+                                                                if (error) {
+                                                                    logger.info(`cancelling transaction ${transactionHash}`, {args});
+                                                                    // IMPORTANT NOTICE
+                                                                    /*
+                                                                    *  This solution assumes no other arbitrage transactions with the same nonce 
+                                                                    *  Were sent during the calculation of this arbitrage transaction
+                                                                    * 
+                                                                    *  That means it is possible a good passing transaction with the same nonce with
+                                                                    *  a higher gas price than a bad passing transaction with the same nonce with a lower
+                                                                    *  gas price could be canceled due to the cancelling of the bad transaction
+                                                                    * 
+                                                                    *  For now, for the sake of simplicity there will be no keeping track of
+                                                                    *  Other transactions sent with the same nonce
+                                                                    */
+                                                                    cancelledOrCompleted = true;
+                                                                    web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedCanceled) => {
+                                                                        if (error) { console.log(error); return; }
+                                                                        web3.eth.sendSignedTransaction(signedCanceled);
+                                                                    });
+                                                                }
+                                                            });
+                                                        }, checkingDelay * (i + 1));
+                                                    }
                                                 })
                                                 .on('receipt', (transactionReceipt) => {
-                                                    console.log(`transaction receipt: ${transactionReceipt}`);
-                                                    cancelledOrCompleted = true;
+                                                    logger.info(transactionReceipt);
                                                 })
-                                                .on('confirmation', (confirmationNumber, receipt) => {
-                                                    console.log(`confirmation number: ${confirmationNumber}`);
-                                                    cancelledOrCompleted = true;
+                                                .on('confirmation', (confirmationNumber) => {
+                                                    logger.info(`confirmation number: ${confirmationNumber}`);
                                                 })
                                                 .on('error', (error) => {
-                                                    console.error(error);
-                                                    cancelledOrCompleted = true;
+                                                    logger.error(error);
                                                 });
-
-                                            const checks = consts.checks;
-                                            const checkingDelay = consts.CHECKING_DELAY;
-                                            for (let i = 0; i < checks; i ++) {
-                                                // check 'checks' time whether transaction should be cancelled
-                                                setTimeout(() => {
-                                                    if (cancelledOrCompleted) {
-                                                        return;
-                                                    }
-                                                    web3.eth.estimateGas(postGasEstimateTransaction, (error, secondaryEstimatedGas) => {
-                                                        if (error) {
-                                                            // IMPORTANT NOTICE
-                                                            /*
-                                                            *  This solution assumes no other arbitrage transactions with the same nonce 
-                                                            *  Were sent during the calculation of this arbitrage transaction
-                                                            * 
-                                                            *  That means it is possible a good passing transaction with the same nonce with
-                                                            *  a higher gas price than a bad passing transaction with the same nonce with a lower
-                                                            *  gas price could be canceled due to the cancelling of the bad transaction
-                                                            * 
-                                                            *  For now, for the sake of simplicity there will be no keeping track of
-                                                            *  Other transactions sent with the same nonce
-                                                            */
-                                                            cancelledOrCompleted = true;
-                                                            web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedCanceled) => {
-                                                                if (error) { console.log(error); return; }
-                                                                web3.eth.sendSignedTransaction(signedCanceled);
-                                                            });
-                                                        }
-                                                    });
-                                                }, checkingDelay * (i + 1));
-                                            }
                                         }
                                     }
                                     else {
