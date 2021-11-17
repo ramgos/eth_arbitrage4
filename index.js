@@ -148,7 +148,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
         // check that there is enought input token in arbitrage contract
         const inputTokenContract = new web3.eth.Contract(erc20ABI, args.token0);
         inputTokenContract.methods.balanceOf(config.CONTRACT_ADDRESS).call((error, inputTokenBalance) => {
-            if (error) { logger.error(error, {args, errcode: 7}); return; }
+            if (error) { logger.error(error, {args: {args, errcode: 7}}); return; }
             
             const inputTokenBalanceBN = new BigNumber(inputTokenBalance.toString(10));  // convert BN to BigNumber
             const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
@@ -176,7 +176,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                 const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
                 // get nonce
                 web3.eth.getTransactionCount(senderAccount.address, (error, nonce) => {
-                    if (error) { logger.error(error, {args, errcode: 6}); return; }
+                    if (error) { logger.error(error, {args: {args, errcode: 6}}); return; }
                     // estimate gas price
                     gasPriceProvider.getGasPrice((acceptableGasPrice) => {
                         const deadline = Math.floor(Date.now() / 1000) + consts.DEADLINE;
@@ -218,7 +218,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                 }
 
                                 web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
-                                    if (error) { logger.error(error, {args, errcode: 5}); return; }
+                                    if (error) { logger.error(error, {args: {args, errcode: 5}}); return; }
                                     const pairAddress0LatestHash = pairAddressToLatestHash.get(args.pairAddress0);
                                     const pairAddress1LatestHash = pairAddressToLatestHash.get(args.pairAddress1);
 
@@ -236,7 +236,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
 
                                             arbTxn.on('transactionHash', (transactionHash) => {
                                                 logger.info(`transaction hash: ${transactionHash}`);
-                                                const checks = consts.checks;
+                                                const checks = consts.CHECKS;
                                                 const checkingDelay = consts.CHECKING_DELAY;
 
                                                 // send empty tx with higher gas price
@@ -272,10 +272,11 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                                     gas: "21000",
                                                                     gasPrice: cancelGasPrice.toString(10),
                                                                     value: "0",
+                                                                    nonce: nonce
                                                                 }
 
                                                                 web3.eth.accounts.signTransaction(cancelTxn, senderAccount.privateKey, (error, signedCanceled) => {
-                                                                    if (error) { logger.error(error, {args, errcode: 4}); return; }
+                                                                    if (error) { logger.error(error, {args: {args, errcode: 4}}); return; }
                                                                     web3.eth.sendSignedTransaction(signedCanceled);
                                                                 });
                                                             }
@@ -294,13 +295,13 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                         }
                                     }
                                     else {
-                                        logger.warn('hashes changed', {
+                                        logger.warn('hashes changed', {args: {
                                             args, 
                                             hash0Now: pairAddress0LatestHash,
                                             hash1Now: pairAddress1LatestHash,
                                             hash0Then: args.pairAddress0Hash,
                                             hash1Then: args.pairAddress1Hash
-                                        });
+                                        }});
                                     }
                                 });
                             }
