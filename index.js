@@ -148,7 +148,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
         // check that there is enought input token in arbitrage contract
         const inputTokenContract = new web3.eth.Contract(erc20ABI, args.token0);
         inputTokenContract.methods.balanceOf(config.CONTRACT_ADDRESS).call((error, inputTokenBalance) => {
-            if (error) { logger.error(error, {args}); return; }
+            if (error) { logger.error(error, {args, errcode: 7}); return; }
             
             const inputTokenBalanceBN = new BigNumber(inputTokenBalance.toString(10));  // convert BN to BigNumber
             const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
@@ -176,7 +176,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                 const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
                 // get nonce
                 web3.eth.getTransactionCount(senderAccount.address, (error, nonce) => {
-                    if (error) { logger.error(error, {args}); return; }
+                    if (error) { logger.error(error, {args, errcode: 6}); return; }
                     // estimate gas price
                     gasPriceProvider.getGasPrice((acceptableGasPrice) => {
                         const deadline = Math.floor(Date.now() / 1000) + consts.DEADLINE;
@@ -218,7 +218,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                 }
 
                                 web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
-                                    if (error) { logger.error(error, {args}); return; }
+                                    if (error) { logger.error(error, {args, errcode: 5}); return; }
                                     const pairAddress0LatestHash = pairAddressToLatestHash.get(args.pairAddress0);
                                     const pairAddress1LatestHash = pairAddressToLatestHash.get(args.pairAddress1);
 
@@ -232,42 +232,56 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
 
                                             let cancelledOrCompleted = false;
 
-                                            web3.eth.sendSignedTransaction(signedTxn.rawTransaction)
-                                                .on('transactionHash', (transactionHash) => {
-                                                    logger.info(`transaction hash: ${transactionHash}`);
-                                                    const checks = consts.checks;
-                                                    const checkingDelay = consts.CHECKING_DELAY;
-                                                    for (let i = 0; i < checks; i ++) {
-                                                        // check 'checks' time whether transaction should be cancelled
-                                                        setTimeout(() => {
-                                                            if (cancelledOrCompleted) {
-                                                                return;
-                                                            }
-                                                            web3.eth.estimateGas(postGasEstimateTransaction, (error) => {
-                                                                if (error) {
-                                                                    logger.info(`cancelling transaction ${transactionHash}`, {args});
-                                                                    // IMPORTANT NOTICE
-                                                                    /*
-                                                                    *  This solution assumes no other arbitrage transactions with the same nonce 
-                                                                    *  Were sent during the calculation of this arbitrage transaction
-                                                                    * 
-                                                                    *  That means it is possible a good passing transaction with the same nonce with
-                                                                    *  a higher gas price than a bad passing transaction with the same nonce with a lower
-                                                                    *  gas price could be canceled due to the cancelling of the bad transaction
-                                                                    * 
-                                                                    *  For now, for the sake of simplicity there will be no keeping track of
-                                                                    *  Other transactions sent with the same nonce
-                                                                    */
-                                                                    cancelledOrCompleted = true;
-                                                                    web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedCanceled) => {
-                                                                        if (error) { logger.error(error, {args}); return; }
-                                                                        web3.eth.sendSignedTransaction(signedCanceled);
-                                                                    });
+                                            const arbTxn = web3.eth.sendSignedTransaction(signedTxn.rawTransaction);
+
+                                            arbTxn.on('transactionHash', (transactionHash) => {
+                                                logger.info(`transaction hash: ${transactionHash}`);
+                                                const checks = consts.checks;
+                                                const checkingDelay = consts.CHECKING_DELAY;
+
+                                                // send empty tx with higher gas price
+                                                const cancelGasPriceFactor = new BigNumber(consts.CANCEL_GASPRICE);
+                                                const cancelGasPrice = gasPriceBN.times(cancelGasPriceFactor);
+
+                                                for (let i = 0; i < checks; i ++) {
+                                                    // check 'checks' time whether transaction should be cancelled
+                                                    setTimeout(() => {
+                                                        if (cancelledOrCompleted) {
+                                                            return;
+                                                        }
+                                                        web3.eth.estimateGas(postGasEstimateTransaction, (error) => {
+                                                            if (error) {
+                                                                logger.info(`cancelling transaction ${transactionHash}`, {args});
+                                                                // IMPORTANT NOTICE
+                                                                /*
+                                                                *  This solution assumes no other arbitrage transactions with the same nonce 
+                                                                *  Were sent during the calculation of this arbitrage transaction
+                                                                * 
+                                                                *  That means it is possible a good passing transaction with the same nonce with
+                                                                *  a higher gas price than a bad passing transaction with the same nonce with a lower
+                                                                *  gas price could be canceled due to the cancelling of the bad transaction
+                                                                * 
+                                                                *  For now, for the sake of simplicity there will be no keeping track of
+                                                                *  Other transactions sent with the same nonce
+                                                                */
+                                                                cancelledOrCompleted = true;
+
+                                                                const cancelTxn = {
+                                                                    from: senderAccount.address,
+                                                                    to: senderAccount.address,
+                                                                    gas: "21000",
+                                                                    gasPrice: cancelGasPrice.toString(10),
+                                                                    value: "0",
                                                                 }
-                                                            });
-                                                        }, checkingDelay * (i + 1));
-                                                    }
-                                                })
+
+                                                                web3.eth.accounts.signTransaction(cancelTxn, senderAccount.privateKey, (error, signedCanceled) => {
+                                                                    if (error) { logger.error(error, {args, errcode: 4}); return; }
+                                                                    web3.eth.sendSignedTransaction(signedCanceled);
+                                                                });
+                                                            }
+                                                        });
+                                                    }, checkingDelay * (i + 1));
+                                                }})
                                                 .on('receipt', (transactionReceipt) => {
                                                     logger.info(transactionReceipt);
                                                 })
@@ -275,12 +289,18 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                     logger.info(`confirmation number: ${confirmationNumber}`);
                                                 })
                                                 .on('error', (error) => {
-                                                    logger.error(error);
+                                                    logger.error(error, {errcode: 3});
                                                 });
                                         }
                                     }
                                     else {
-                                        logger.warn('hashes changed', {args});
+                                        logger.warn('hashes changed', {
+                                            args, 
+                                            hash0Now: pairAddress0LatestHash,
+                                            hash1Now: pairAddress1LatestHash,
+                                            hash0Then: args.pairAddress0Hash,
+                                            hash1Then: args.pairAddress1Hash
+                                        });
                                     }
                                 });
                             }
@@ -331,7 +351,7 @@ web3.eth.subscribe('logs', {
                             UpdatePairReservesData(otherPairAddress, '0', otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
                         }
                         else {
-                            logger.error(error);
+                            logger.error(error, {errcode: 2});
                         }
                     });
                 }
@@ -342,6 +362,6 @@ web3.eth.subscribe('logs', {
         }
     }
     else {
-        logger.log(error);
+        logger.log(error, {errcode: 1});
     }
 });
