@@ -250,6 +250,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp, web3, sender
                                                         }
                                                         web3.eth.estimateGas(postGasEstimateTransaction, (error) => {
                                                             if (error) {
+                                                                logger.error(error, {args: {args, errcode: 9}});
                                                                 logger.info(`cancelling transaction ${transactionHash}`, {args:{args, errcode: 8}});
                                                                 cancelledOrCompleted = true;
 
