@@ -13,13 +13,12 @@ const tokens = require('./data/tokens.json');
 
 const arbMath = require('./arbmath.js');
 const extraMath = require('./extramath.js');
+const { getWeb3 } = require('./web3provider.js');
 const { GasPriceProvider } = require('./gascalculator');
 const { logger } = require('./logger.js');
 
-const web3 = new Web3(config.WSS_RPC);
 const primaryToken = consts.WMATIC;
 const gasPriceProvider = new GasPriceProvider();
-const senderAccount = web3.eth.accounts.privateKeyToAccount(config.PRIVATE_KEY);
 
 
 const ReservePairData = (originalPairData) => {
@@ -93,7 +92,7 @@ Object.entries(tokens).forEach(([id, tokenPairs]) => {
 //#endregion
 
 // check if profit, send transaction if yes
-const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
+const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp, web3, senderAccount) => {
     const vPairReserveData0 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress0));
     const vPairReserveData1 = VirtualReservePairData(pairAddressToReserveData.get(pairAddress1));
 
@@ -235,13 +234,13 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                             const arbTxn = web3.eth.sendSignedTransaction(signedTxn.rawTransaction);
 
                                             arbTxn.on('transactionHash', (transactionHash) => {
-                                                logger.info(`transaction hash: ${transactionHash}`);
+                                                logger.info(`transaction hash: ${transactionHash}`, {args});
                                                 const checks = consts.CHECKS;
                                                 const checkingDelay = consts.CHECKING_DELAY;
 
                                                 // send empty tx with higher gas price
                                                 const cancelGasPriceFactor = new BigNumber(consts.CANCEL_GASPRICE);
-                                                const cancelGasPrice = gasPriceBN.times(cancelGasPriceFactor);
+                                                const cancelGasPrice = extraMath.ceil(gasPriceBN.times(cancelGasPriceFactor));
 
                                                 for (let i = 0; i < checks; i ++) {
                                                     // check 'checks' time whether transaction should be cancelled
@@ -251,19 +250,7 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
                                                         }
                                                         web3.eth.estimateGas(postGasEstimateTransaction, (error) => {
                                                             if (error) {
-                                                                logger.info(`cancelling transaction ${transactionHash}`, {args});
-                                                                // IMPORTANT NOTICE
-                                                                /*
-                                                                *  This solution assumes no other arbitrage transactions with the same nonce 
-                                                                *  Were sent during the calculation of this arbitrage transaction
-                                                                * 
-                                                                *  That means it is possible a good passing transaction with the same nonce with
-                                                                *  a higher gas price than a bad passing transaction with the same nonce with a lower
-                                                                *  gas price could be canceled due to the cancelling of the bad transaction
-                                                                * 
-                                                                *  For now, for the sake of simplicity there will be no keeping track of
-                                                                *  Other transactions sent with the same nonce
-                                                                */
+                                                                logger.info(`cancelling transaction ${transactionHash}`, {args:{args, errcode: 8}});
                                                                 cancelledOrCompleted = true;
 
                                                                 const cancelTxn = {
@@ -315,54 +302,63 @@ const CheckArbOneWay = (pairAddress0, pairAddress1, startTimestamp) => {
 
 
 // check arb opportuinites whenever a swap happens in any one of the dex contracts
-web3.eth.subscribe('logs', {
-    address: Array.from(pairAddressToGroupId.keys()), 
-    topics: ['0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1']  // signature of sync event
-}, (error, syncEvent) => {
-    const now = Date.now();
 
-    if (!error) {
-        const pairAddress = syncEvent.address;
+getWeb3()
+    .then((web3) => {
+        const senderAccount = web3.eth.accounts.privateKeyToAccount(config.PRIVATE_KEY);
 
-        if (pairAddressToGroupId.has(pairAddress) && !syncEvent.removed) {
-            const groupId = pairAddressToGroupId.get(pairAddress);
-            const otherPairDatasInGroup = tokens[groupId].filter(elem => elem.pairAddress !== pairAddress);  // all pair contracts in group except the one that recieved the sync event
-            const pairData = tokens[groupId].filter(elem => elem.pairAddress === pairAddress)[0];
-
-            // parse reserve data from log and update
-            const [reserve0, reserve1] = syncEvent.data.slice(2).match(/.{1,64}/g).map(hex => new BigNumber(hex, 16));
-            UpdatePairReservesData(pairAddress, syncEvent.transactionHash, reserve0, reserve1, pairData.token0, pairData.token1);
-
-            // 'otherPairData' is pair data from tokens.json, and 'otherPairReserveData is in format of ReservePairData'
-            otherPairDatasInGroup.forEach((otherPairData) => {
-                const otherPairAddress = otherPairData.pairAddress;
-                const otherPairReserveData = pairAddressToReserveData.get(otherPairAddress);
-
-                // here calculate arbitrage profitability, if profitable handle sending transactions
-
-                if (otherPairReserveData.hasReserveData === false) {
-                    // if other pair doens't have reserve data, fetch and calculate
-
-                    const otherPairContract = new web3.eth.Contract(pairABI, otherPairData.pairAddress);
-                    otherPairContract.methods.getReserves().call((error, reserveData) => {
-                        if (!error && reserveData._reserve0 && reserveData._reserve1) {
-                            // convert BN to BigNumber and update reserve data
-
-                            const [otherReserve0, otherReserve1] = [new BigNumber(reserveData._reserve0.toString(10)), new BigNumber(reserveData._reserve1.toString(10))];
-                            UpdatePairReservesData(otherPairAddress, '0', otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
+        web3.eth.subscribe('logs', {
+            address: Array.from(pairAddressToGroupId.keys()), 
+            topics: ['0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1']  // signature of sync event
+        }, (error, syncEvent) => {
+            const now = Date.now();
+        
+            if (!error) {
+                const pairAddress = syncEvent.address;
+        
+                if (pairAddressToGroupId.has(pairAddress) && !syncEvent.removed) {
+                    const groupId = pairAddressToGroupId.get(pairAddress);
+                    const otherPairDatasInGroup = tokens[groupId].filter(elem => elem.pairAddress !== pairAddress);  // all pair contracts in group except the one that recieved the sync event
+                    const pairData = tokens[groupId].filter(elem => elem.pairAddress === pairAddress)[0];
+        
+                    // parse reserve data from log and update
+                    const [reserve0, reserve1] = syncEvent.data.slice(2).match(/.{1,64}/g).map(hex => new BigNumber(hex, 16));
+                    UpdatePairReservesData(pairAddress, syncEvent.transactionHash, reserve0, reserve1, pairData.token0, pairData.token1);
+        
+                    // 'otherPairData' is pair data from tokens.json, and 'otherPairReserveData is in format of ReservePairData'
+                    otherPairDatasInGroup.forEach((otherPairData) => {
+                        const otherPairAddress = otherPairData.pairAddress;
+                        const otherPairReserveData = pairAddressToReserveData.get(otherPairAddress);
+        
+                        // here calculate arbitrage profitability, if profitable handle sending transactions
+        
+                        if (otherPairReserveData.hasReserveData === false) {
+                            // if other pair doens't have reserve data, fetch and calculate
+        
+                            const otherPairContract = new web3.eth.Contract(pairABI, otherPairData.pairAddress);
+                            otherPairContract.methods.getReserves().call((error, reserveData) => {
+                                if (!error && reserveData._reserve0 && reserveData._reserve1) {
+                                    // convert BN to BigNumber and update reserve data
+        
+                                    const [otherReserve0, otherReserve1] = [new BigNumber(reserveData._reserve0.toString(10)), new BigNumber(reserveData._reserve1.toString(10))];
+                                    UpdatePairReservesData(otherPairAddress, '0', otherReserve0, otherReserve1, otherPairData.token0, otherPairData.token1);
+                                }
+                                else {
+                                    logger.error(error, {errcode: 2});
+                                }
+                            });
                         }
-                        else {
-                            logger.error(error, {errcode: 2});
-                        }
+        
+                        CheckArbOneWay(pairAddress, otherPairAddress, now, web3, senderAccount),
+                        CheckArbOneWay(otherPairAddress, pairAddress, now, web3, senderAccount)
                     });
                 }
-
-                CheckArbOneWay(pairAddress, otherPairAddress, now),
-                CheckArbOneWay(otherPairAddress, pairAddress, now)
-            });
-        }
-    }
-    else {
-        logger.log(error, {errcode: 1});
-    }
-});
+            }
+            else {
+                logger.log(error, {errcode: 1});
+            }
+        });
+    })
+    .catch((err) => {
+        logger.error(err, {msg: "Something went terribly wrong. Could not get web3 provider: "});
+    });

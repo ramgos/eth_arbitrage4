@@ -6,11 +6,10 @@ const extraMath = require('./extramath.js');
 const consts = require('./data/consts.json');
 const config = require('./data/config.json');
 
-const web3 = new Web3(config.WSS_RPC);
-
+const { getWeb3 } = require('./web3provider.js');
 
 // get gas prices sorted of all transactions in each block in the past n blocks
-const getBlockGasDataArray = (callback, n) => {
+const getBlockGasDataArray = (callback, n, web3) => {
     web3.eth.getBlockNumber((error, blockNumber) => {
         if (error) {console.log(error); return;}
     
@@ -36,14 +35,14 @@ const getBlockGasDataArray = (callback, n) => {
 
 
 // sqrt weighted average of p precentile amongst last n blocks
-const getGasPrice = (callback, p, n) => {
+const getGasPrice = (callback, p, n, web3) => {
     getBlockGasDataArray((blockGasDataArray) => {
         const targetPrecentile = new BigNumber(p);
         const precentileGasPrices = blockGasDataArray.map(blockGasData => extraMath.precentile(blockGasData, targetPrecentile));
         const acceptableGasPrice = extraMath.ceil(extraMath.sqrtWeightedAverage(precentileGasPrices));
 
         callback(acceptableGasPrice);
-    }, n);
+    }, n, web3);
 }
 
 
@@ -51,16 +50,31 @@ const getGasPrice = (callback, p, n) => {
 // if getGasPrice was called in the last GASPRICE_THROTTLE seconds, that result will be returned instead
 class GasPriceProvider {
     constructor() {
-        this.throttle = consts.GASPRICE_THROTTLE;
-        this.sampleSize = consts.SAMPLE_SIZE;
-        this.acceptablePrecentile = consts.ACCEPTABLE_PRECENTILE;
-        this.lastGasPrice = 0;
-        this.lastCalled = 0;
-        this.isWorkingNow = false;
-        this.callbackQueue = new Array();
+        getWeb3()
+            .then((web3) => {
+                this.initialized = true;
+                this.web3 = web3;
+                this.throttle = consts.GASPRICE_THROTTLE;
+                this.sampleSize = consts.SAMPLE_SIZE;
+                this.acceptablePrecentile = consts.ACCEPTABLE_PRECENTILE;
+                this.lastGasPrice = 0;
+                this.lastCalled = 0;
+                this.isWorkingNow = false;
+                this.callbackQueue = new Array();
+            })
+            .catch((error) => {
+                console.log("gas calculator could not connect to web3 provider");
+                console.error(error);
+                throw new Error("gas calculator could not connect to web3 provider");
+            });
     }
 
     getGasPrice(callback) {
+        if (!this.initialized) {
+            console.log("gas calculator not initialized yet");
+            throw new Error("gas calculator not initialized yet");
+        }
+
         if (this.isWorkingNow) {
             this.callbackQueue.push(callback);
         }
@@ -80,7 +94,7 @@ class GasPriceProvider {
                     this.callbackQueue = new Array();
                     this.isWorkingNow = false;
                     
-                }, this.acceptablePrecentile, this.sampleSize);
+                }, this.acceptablePrecentile, this.sampleSize, this.web3);
             }
         }
     }
