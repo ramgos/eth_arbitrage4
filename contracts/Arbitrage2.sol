@@ -15,11 +15,9 @@ interface IUniswapV2Router02 {
 /**
  * @dev execute arbitrage opportunities
  * 
- * can only use WMATIC as the first token, all funds are kept in the contract 
- * and on doubleSwap it only checks if the swaps were profitable at the end.
+ * all funds are kept in the contract 
  * 
- * the contract is unoptimized, for some reason if you set the minAmountOut
- * in the second swap to the amountIn, it throws a revert error. that must be looked into
+ * the contract is suboptimized - token pair contracts aren't interacted with directly
  * 
  */
 contract Arbitrage2 {
@@ -30,7 +28,7 @@ contract Arbitrage2 {
     }
     
     modifier ensure(uint deadline) {
-        require(deadline >= block.timestamp, 'ARB: EXPIRED');
+        require(deadline >= block.number, 'ARB: EXPIRED');
         _;
     }
     
@@ -51,6 +49,7 @@ contract Arbitrage2 {
      * if amount gotten is lower than initial WMATIC amount
      * transactions will revert
      * 
+     * deadline is in blocks
      */
     function doubleSwap(
             address _token0,
@@ -65,9 +64,12 @@ contract Arbitrage2 {
         IERC20 _token0Interface = IERC20(_token0);
         uint _token0BalanceBeforeSwap = _token0Interface.balanceOf(address(this));
         require(_token0BalanceBeforeSwap >= _amountIn, "ARB: NOT ENOUGH TOKEN 0");
-        
+
+        IERC20 _token1Interface = IERC20(_token1);
+        uint _token1BalanceBeforeSwap = IERC20(_token1).balanceOf(address(this));
+
         _token0Interface.approve(_router0, _amountIn); // approve first router to use wmatic
-        
+
         // first swap args
         address[] memory _path = new address[](2);
         _path[0] = _token0;
@@ -79,12 +81,12 @@ contract Arbitrage2 {
             _amountOut,
             _path,
             address(this),
-            _deadline
+            block.timestamp
         );
         
-        uint _token1BalanceAfterSwap = IERC20(_token1).balanceOf(address(this));
+        uint _token1BalanceAfterSwap = _token1Interface.balanceOf(address(this));
         // approve all gotten tokens of type token
-        IERC20(_token1).approve(_router1, _token1BalanceAfterSwap);
+        _token1Interface.approve(_router1, _token1BalanceAfterSwap);
 
         // switch swap order
         _path[0] = _token1;
@@ -92,11 +94,11 @@ contract Arbitrage2 {
         
         // second swap
         IUniswapV2Router02(_router1).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            _token1BalanceAfterSwap,
+            _token1BalanceAfterSwap - _token1BalanceBeforeSwap,
             _amountIn,
             _path,
             address(this),
-            _deadline
+            block.timestamp
         );
         
         // cancel if amount gotten is smaller than initial amountIn
