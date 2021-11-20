@@ -4,102 +4,58 @@ const BigNumber = require('bignumber.js');
 const extraMath = require('./extramath.js');
 
 const consts = require('./data/consts.json');
-const config = require('./data/config.json');
 
-const { getWeb3 } = require('./web3provider.js');
+const { logger } = require('./logger.js');
+// const { getWeb3 } = require('./web3provider.js');
 
 // get gas prices sorted of all transactions in each block in the past n blocks
-const getBlockGasDataArray = (callback, n, web3) => {
-    web3.eth.getBlockNumber((error, blockNumber) => {
-        if (error) {console.log(error); return;}
-    
-        const blockGasDataArray = new Array();
+const getBlockGasDataArray = async (n, web3) => {
+    return new Promise((resolve, reject) => {
+        web3.eth.getBlockNumber(async (error, blockNumber) => {
+            if (error) {
+                const ERROR_MSG = "gascalculator.js: Could not get initial block number";
 
-        const getBlocks = (i) => {
-            if (i === -1) {
-                callback(blockGasDataArray);
+                logger.error(error, {meta: {msg: ERROR_MSG}});
+                reject(ERROR_MSG);
             }
             else {
-                web3.eth.getBlock(blockNumber - i, true, (error, blockData) => {
-                    if (error) {console.log(error); return;}
-            
-                    blockGasDataArray.push(blockData.transactions.map(txData => txData.gasPrice).sort(extraMath.compareBN));
-                    getBlocks(i - 1);
-                });
+                try {
+                    const rawBlockData = await Promise.all([...Array(n).keys()].reverse().map(i => web3.eth.getBlock(blockNumber - i, true)));
+                    const blockGasDataArray = rawBlockData.map(blockData => blockData.transactions.map(txData => txData.gasPrice).sort(extraMath.compareBN));
+                    resolve(blockGasDataArray);
+                } catch (error) {
+                    const ERROR_MSG = "gascalculator.js: Failure to fetch block gas data";
+                    logger.error(error, {meta: {msg: ERROR_MSG}});
+                    reject(ERROR_MSG);
+                }
             }
-        }
-
-        getBlocks(n - 1);
+        });
     });
 }
 
 
 // sqrt weighted average of p precentile amongst last n blocks
-const getGasPrice = (callback, p, n, web3) => {
-    getBlockGasDataArray((blockGasDataArray) => {
-        const targetPrecentile = new BigNumber(p);
-        const precentileGasPrices = blockGasDataArray.map(blockGasData => extraMath.precentile(blockGasData, targetPrecentile));
-        const acceptableGasPrice = extraMath.ceil(extraMath.sqrtWeightedAverage(precentileGasPrices));
+const getGasPrice = (p, n, web3) => {
+    return new Promise((resolve, reject) => {
+        getBlockGasDataArray(n, web3)
+            .then((blockGasDataArray) => {
+                const targetPrecentile = new BigNumber(p);
+                const precentileGasPrices = blockGasDataArray.map(blockGasData => extraMath.precentile(blockGasData, targetPrecentile));
+                const acceptableGasPrice = extraMath.ceil(extraMath.sqrtWeightedAverage(precentileGasPrices));
 
-        callback(acceptableGasPrice);
-    }, n, web3);
-}
-
-
-// gas provider acts as a proxy with the functions in this script - default values set in ./data/consts.json
-// if getGasPrice was called in the last GASPRICE_THROTTLE seconds, that result will be returned instead
-class GasPriceProvider {
-    constructor() {
-        getWeb3()
-            .then((web3) => {
-                this.initialized = true;
-                this.web3 = web3;
-                this.throttle = consts.GASPRICE_THROTTLE;
-                this.sampleSize = consts.SAMPLE_SIZE;
-                this.acceptablePrecentile = consts.ACCEPTABLE_PRECENTILE;
-                this.lastGasPrice = 0;
-                this.lastCalled = 0;
-                this.isWorkingNow = false;
-                this.callbackQueue = new Array();
+                resolve(acceptableGasPrice);
             })
-            .catch((error) => {
-                console.log("gas calculator could not connect to web3 provider");
-                console.error(error);
-                throw new Error("gas calculator could not connect to web3 provider");
+            .catch((reason) => {
+                const ERROR_MSG = "gascalculator.js: Failed to get gas price";
+                logger.error(reason, {meta: {msg: ERROR_MSG}});
+                reject(ERROR_MSG);
             });
-    }
-
-    getGasPrice(callback) {
-        if (!this.initialized) {
-            console.log("gas calculator not initialized yet");
-            throw new Error("gas calculator not initialized yet");
-        }
-
-        if (this.isWorkingNow) {
-            this.callbackQueue.push(callback);
-        }
-        else {
-            const delay = Date.now() - this.lastCalled 
-            if (delay < this.throttle) {
-                callback(this.lastGasPrice);
-            }
-            else {
-                this.callbackQueue.push(callback);
-                this.isWorkingNow = true;
-                getGasPrice((gasPrice) => {
-                    this.lastCalled = Date.now();
-                    this.lastGasPrice = gasPrice;
-                    
-                    this.callbackQueue.forEach(pendingCallback => pendingCallback(gasPrice));
-                    this.callbackQueue = new Array();
-                    this.isWorkingNow = false;
-                    
-                }, this.acceptablePrecentile, this.sampleSize, this.web3);
-            }
-        }
-    }
+    });
 }
+
+const getGasPriceDefault = (web3) => getGasPrice(consts.ACCEPTABLE_PRECENTILE, consts.SAMPLE_SIZE, web3);
 
 module.exports = {
-    GasPriceProvider
+    getGasPrice,
+    getGasPriceDefault
 }

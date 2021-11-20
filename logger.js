@@ -21,6 +21,9 @@ const logger = () => {
             new winston.transports.File({
                 filename: errorName,
                 level: 'warn'
+            }),
+            new winston.transports.Console({
+                level: 'info'
             })
         ]
     });
