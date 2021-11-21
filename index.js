@@ -126,7 +126,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
     }
 
     try {
-        const grossProfitAsWMATICBN = await evaluateAsMatic(token0, grossPayBN, web3);
+        const grossProfitAsWMATICBN = await evaluateAsMatic(token0, grossProfitBN, web3);
 
         // calculate what portion of profit goes towards gas price
         const gasPrecentBN = new BigNumber(consts.GAS_PRECENT);
