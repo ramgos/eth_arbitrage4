@@ -186,7 +186,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
             }
 
             web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
-                if (error) {logger.error(error, { meta: {msg: "index.js: Failed to sign arbitrage transaction", txn: postGasEstimateTransaction}}); return;}
+                if (error) {logger.error(error, { meta: {msg: "index.js: Failed to sign arbitrage transaction", txn: postGasEstimateTransaction, args}}); return;}
 
                 const [latestHash0, latestHash1] = [pairAddressToLatestHashGet(pairAddress0), pairAddressToLatestHashGet(pairAddress1)];
                 if ((latestHash0 !== hash0) || (latestHash1 !== hash1)) {
@@ -205,16 +205,16 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
 
                 arbTxn
                     .on('transactionHash', (transactionHash) => {
-                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {postGasEstimateTransaction}});
+                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransaction, args}});
                     })
                     .on('receipt', (transactionReceipt) => {
-                        logger.info(transactionReceipt);
+                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransaction, args}});
                     })
                     .on('confirmation', (confirmationNumber) => {
-                        logger.info(`index.js: confirmation number: ${confirmationNumber}`);
+                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransaction, args}});
                     })
                     .on('error', (error) => {
-                        logger.error(error, {msg: "index.js: txn failed"});
+                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransaction, args}});
                     });
             });
         });
