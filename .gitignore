@@ -2,3 +2,4 @@ node_modules/
 logs/
 .vscode/
 data/config.json
+playground.js

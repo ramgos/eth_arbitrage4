@@ -15,6 +15,7 @@ const arbMath = require('./arbmath.js');
 const extraMath = require('./extramath.js');
 const { getWeb3 } = require('./web3provider.js');
 const { getGasPriceDefault } = require('./gascalculator.js');
+const { logtxn } = require('./dbhelper.js');
 const { logger } = require('./logger.js');
 
 const defaultFactoryAddress = "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"
@@ -87,7 +88,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
     const [router0, router1] = [pair0DexData.router, pair1DexData.router];
     const [hash0, hash1] = [pairAddressToLatestHashGet(pairAddress0), pairAddressToLatestHashGet(pairAddress1)].map(cloneDeep);
     const [a0, b0, a1, b1] = [new BigNumber(pair0DexData.a), new BigNumber(pair0DexData.b), new BigNumber(pair1DexData.a), new BigNumber(pair1DexData.b)];
-    const args = {pairData0, pairData1, pair0reserve0, pair0reserve1, pair1reserve0, pair1reserve1};
+    const reserveData = {pairData0, pairData1, pair0reserve0, pair0reserve1, pair1reserve0, pair1reserve1};
 
     const optimalAmountBN = extraMath.ceil(arbMath.getOptimalAmount(
         pair0reserve0, 
@@ -107,7 +108,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
         a1, b1
     ));
 
-    const swap0ResultWeighted = extraMath.ceil(arbMath.getPoolReturn(
+    const swap0ResultWeightedBN = extraMath.ceil(arbMath.getPoolReturn(
         pair0reserve0, 
         pair1reserve1,
         optimalAmountBN,
@@ -121,7 +122,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
 
     const grossProfitBN = grossPayBN.minus(optimalAmountBN);
     if (grossProfitBN.lt(new BigNumber(0))) {
-        logger.warn(`index.js: Impossible oppurtunity slipped`, {meta: {args}});
+        logger.warn(`index.js: Impossible oppurtunity slipped`, {meta: {args: reserveData}});
         return ;
     }
 
@@ -146,14 +147,18 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
         const deadline = blockNumber + consts.DEADLINE;
 
         const arbContract = new web3.eth.Contract(arbitrageABI, config.CONTRACT_ADDRESS);
-        const rawArbTransactionData = arbContract.methods.doubleSwap(
+        const callData = {
             token0,
             token1,
             router0, 
             router1, 
-            optimalAmountBN,
-            swap0ResultWeighted,
+            optimalAmount: optimalAmountBN.toString(10),
+            swap0ResultWeighted: swap0ResultWeightedBN.toString(10),
             deadline
+        }
+
+        const rawArbTransactionData = arbContract.methods.doubleSwap(
+            ...Object.values(callData)
         ).encodeABI();
 
         const preGasEstimateTransaction = {
@@ -186,7 +191,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
             }
 
             web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
-                if (error) {logger.error(error, { meta: {msg: "index.js: Failed to sign arbitrage transaction", txn: postGasEstimateTransaction, args}}); return;}
+                if (error) {logger.error(error, { meta: {msg: "index.js: Failed to sign arbitrage transaction", txn: postGasEstimateTransaction, args: reserveData}}); return;}
 
                 const [latestHash0, latestHash1] = [pairAddressToLatestHashGet(pairAddress0), pairAddressToLatestHashGet(pairAddress1)];
                 if ((latestHash0 !== hash0) || (latestHash1 !== hash1)) {
@@ -205,16 +210,24 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
 
                 arbTxn
                     .on('transactionHash', (transactionHash) => {
-                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransaction, args}});
+                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                        logtxn({
+                            hash: transactionHash,
+                            timestart: now,
+                            blocknumber,
+                            nonce,
+                            call: JSON.stringify(callData),
+                            reserve: JSON.stringify(reserveData)
+                        });
                     })
                     .on('receipt', (transactionReceipt) => {
-                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransaction, args}});
+                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
                     })
                     .on('confirmation', (confirmationNumber) => {
-                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransaction, args}});
+                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
                     })
                     .on('error', (error) => {
-                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransaction, args}});
+                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransaction, args: reserveData}});
                     });
             });
         });
