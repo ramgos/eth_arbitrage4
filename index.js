@@ -214,7 +214,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
                         logtxn({
                             hash: transactionHash,
                             timestart: now,
-                            blocknumber,
+                            blockNumber,
                             nonce,
                             call: JSON.stringify(callData),
                             reserve: JSON.stringify(reserveData)
