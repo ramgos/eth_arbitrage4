@@ -11,7 +11,7 @@ const pairABI = require('./data/SushiPairABI.json');
 const ERC20ABI = require('./data/ERC20ABI.json');
 
 const { getWeb3 } = require('./web3provider.js');
-const primaryTokens = [consts.WMATIC, "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619"];  // wmatic and weth
+const primaryTokens = [consts.WMATIC, "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"];  // wmatic and weth
 
 
 const doShareItems = (arr1, arr2) => {
