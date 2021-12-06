@@ -47,5 +47,40 @@
         "factory": "0x477Ce834Ae6b7aB003cCe4BC4d8697763FF456FA",
         "a": 9976,
         "b": 10000
+    },
+    "SMARTDEX": {
+        "name": "SMARTDEX",
+        "router": "0x6f5fE5Fef0186f7B27424679cbb17e45df6e2118",
+        "factory": "0xBE087BeD88539d28664c9998FE3f180ea7b9749C",
+        "a": 997,
+        "b": 1000
+    },
+    "ELKDEX": {
+        "name": "ELKDEX",
+        "router": "0xf38a7A7Ac2D745E2204c13F824c00139DF831FFf",
+        "factory": "0xE3BD06c7ac7E1CeB17BdD2E5BA83E40D1515AF2a",
+        "a": 997,
+        "b": 1000
+    },
+    "CHEESECAKESWAP": {
+        "name": "CHEESECAKESWAP",
+        "router": "0xC0788A3aD43d79aa53B09c2EaCc313A787d1d607",
+        "factory": "0xCf083Be4164828f00cAE704EC15a36D711491284",
+        "a": 998,
+        "b": 1000
+    },
+    "GRAVITYFINANCE": {
+        "name": "GRAVITYFINANCE",
+        "router": "0x57dE98135e8287F163c59cA4fF45f1341b680248",
+        "factory": "0x3ed75AfF4094d2Aaa38FaFCa64EF1C152ec1Cf20",
+        "a": 997,
+        "b": 1000
+    },
+    "WAULTSWAP": {
+        "name": "WAULTSWAP",
+        "router": "0x3a1D87f206D12415f5b0A33E786967680AAb4f6d",
+        "factory": "0xa98ea6356A316b44Bf710D5f9b6b4eA0081409Ef",
+        "a": 998,
+        "b": 1000
     }
 }
