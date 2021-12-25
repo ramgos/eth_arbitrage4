@@ -83,7 +83,7 @@ const evaluateAsMatic = async (tokenAddress, tokenAmount, web3) => {
 }
 
 
-const SendArbTransactions = async ({postGasEstimateTransaction, senderAccount, reserveData, hash0, hash1, web3, now}) => {
+const SendArbTransactions = async ({postGasEstimateTransaction, senderAccount, reserveData, pairAddress0, pairAddress1, hash0, hash1, web3, now}) => {
     try {
         let cancel = false;
         for (let i = 0; i < consts.TX_COUNT; i++) {
@@ -119,7 +119,7 @@ const SendArbTransactions = async ({postGasEstimateTransaction, senderAccount, r
     
                 arbTxn
                     .on('transactionHash', (transactionHash) => {
-                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransactionClone, args: reserveData}});
                         logtxn({
                             hash: transactionHash,
                             timestart: now,
@@ -130,13 +130,13 @@ const SendArbTransactions = async ({postGasEstimateTransaction, senderAccount, r
                         });
                     })
                     .on('receipt', (transactionReceipt) => {
-                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransactionClone, args: reserveData}});
                     })
                     .on('confirmation', (confirmationNumber) => {
-                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransactionClone, args: reserveData}});
                     })
                     .on('error', (error) => {
-                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransaction, args: reserveData}});
+                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransactionClone, args: reserveData}});
                     });
             });
     
@@ -268,7 +268,7 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
             return;
         }
 
-        await SendArbTransactions({postGasEstimateTransaction, senderAccount, reserveData, hash0, hash1, web3, now});
+        await SendArbTransactions({postGasEstimateTransaction, senderAccount, reserveData, hash0, hash1, pairAddress0, pairAddress1, web3, now});
     } catch (error) {
         logger.error(error, {meta: {msg: "index.js: failure in CheckArbOneWay"}});
     }
