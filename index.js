@@ -18,6 +18,8 @@ const { getGasPriceDefault } = require('./gascalculator.js');
 const { logtxn } = require('./dbhelper.js');
 const { logger } = require('./logger.js');
 
+const { EmptyTransaction } = require('./utils/web3utils.js');
+
 const defaultFactoryAddress = "0xc35DADB65012eC5796536bD9864eD8773aBc74C4"
 const wmaticAddress = consts.WMATIC;
 
@@ -80,6 +82,71 @@ const evaluateAsMatic = async (tokenAddress, tokenAmount, web3) => {
     }
 }
 
+
+const SendArbTransactions = async ({postGasEstimateTransaction, senderAccount, reserveData, hash0, hash1, web3, now}) => {
+    try {
+        let cancel = false;
+        for (let i = 0; i < consts.TX_COUNT; i++) {
+            if (cancel) { break; }
+
+            const postGasEstimateTransactionClone =  cloneDeep(postGasEstimateTransaction);
+    
+            // gas price is i + 1 / total precent of final gas price
+            postGasEstimateTransactionClone.gasPrice = 
+                extraMath.ceil(
+                    (new BigNumber(postGasEstimateTransactionClone.gasPrice)).times(i + 1).div(consts.TX_COUNT)
+                ).toString(10);
+    
+            web3.eth.accounts.signTransaction(postGasEstimateTransactionClone, senderAccount.privateKey, (error, signedTxn) => {
+                if (error) {logger.error(error, { meta: {msg: "index.js: Failed to sign arbitrage transaction", txn: postGasEstimateTransactionClone, args: reserveData}}); return;}
+    
+                const [latestHash0, latestHash1] = [pairAddressToLatestHashGet(pairAddress0), pairAddressToLatestHashGet(pairAddress1)];
+                if ((latestHash0 !== hash0) || (latestHash1 !== hash1)) {
+                    logger.info("index.js: Hashes Changed", {meta: {hash0, latestHash0, hash1, latestHash1}});
+                    cancel = true;
+
+                    if (i != 0) {
+                        EmptyTransaction({
+                            senderAccount, 
+                            gasPrice: extraMath.ceil((new BigNumber(postGasEstimateTransactionClone.gasPrice)).times(consts.CANCEL_GASPRICE)).toString(10),
+                            nonce: postGasEstimateTransactionClone.nonce,
+                            web3
+                        });
+                    }
+                }
+    
+                const arbTxn = web3.eth.sendSignedTransaction(signedTxn.rawTransaction);
+    
+                arbTxn
+                    .on('transactionHash', (transactionHash) => {
+                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                        logtxn({
+                            hash: transactionHash,
+                            timestart: now,
+                            blockNumber,
+                            nonce,
+                            call: JSON.stringify(callData),
+                            reserve: JSON.stringify(reserveData)
+                        });
+                    })
+                    .on('receipt', (transactionReceipt) => {
+                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                    })
+                    .on('confirmation', (confirmationNumber) => {
+                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
+                    })
+                    .on('error', (error) => {
+                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransaction, args: reserveData}});
+                    });
+            });
+    
+            await new Promise(resolve => setTimeout(resolve, consts.TX_DELAY));
+        }
+    }
+    catch (error) {
+        logger.error(error, { meta: {msg: "index.js: error in SendArbTransactions"} })
+    }
+}
 
 const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve1, pair1reserve0, pair1reserve1, gasPriceMin, now, senderAccount, web3}) => {
     const [token0, token1] = [pairData0.token0.address, pairData0.token1.address];
@@ -168,69 +235,40 @@ const CheckArbOneWay = async ({pairData0, pairData1, pair0reserve0, pair0reserve
             nonce: nonce
         }
 
-        web3.eth.estimateGas(preGasEstimateTransaction, (error, estimatedGas) => {
-            if (error) {/*console.error(error);*/ return;}
+        try {
+            estimatedGas = await web3.eth.estimateGas(preGasEstimateTransaction);
+        }
+        catch (error) {
+            return;
+        }
 
-            const estimatedGasBN = new BigNumber(estimatedGas);
-            const gasBufferBN = new BigNumber(consts.GAS_OVERESTIMATE);
-            const totalGasBN = extraMath.ceil(estimatedGasBN.times(gasBufferBN));  // gas limit
-            const gasPriceBN = extraMath.ceil(totalGasPriceBN.div(totalGasBN));  // gas price per unit
+        const estimatedGasBN = new BigNumber(estimatedGas);
+        const gasBufferBN = new BigNumber(consts.GAS_OVERESTIMATE);
+        const totalGasBN = extraMath.ceil(estimatedGasBN.times(gasBufferBN));  // gas limit
+        const gasPriceBN = extraMath.ceil(totalGasPriceBN.div(totalGasBN));  // gas price per unit
 
-            // gas price isnt big enough
-            if (gasPriceBN.lt(gasPriceMin)) {
-                return;
-            }
+        // gas price isnt big enough
+        if (gasPriceBN.lt(gasPriceMin)) {
+            return;
+        }
 
-            postGasEstimateTransaction = {
-                from: senderAccount.address,
-                to: arbContract.options.address,
-                data: rawArbTransactionData,
-                gas: totalGasBN.toString(10),
-                gasPrice: gasPriceBN.toString(10),
-                nonce: nonce
-            }
+        postGasEstimateTransaction = {
+            from: senderAccount.address,
+            to: arbContract.options.address,
+            data: rawArbTransactionData,
+            gas: totalGasBN.toString(10),
+            gasPrice: gasPriceBN.toString(10),
+            nonce: nonce
+        }
 
-            web3.eth.accounts.signTransaction(postGasEstimateTransaction, senderAccount.privateKey, (error, signedTxn) => {
-                if (error) {logger.error(error, { meta: {msg: "index.js: Failed to sign arbitrage transaction", txn: postGasEstimateTransaction, args: reserveData}}); return;}
+        const nowNow = Date.now();
+        const delay = nowNow - now;
+        if (delay >= consts.EXPIRY) {
+            logger.info("index.js: expired", {meta: {delay}});
+            return;
+        }
 
-                const [latestHash0, latestHash1] = [pairAddressToLatestHashGet(pairAddress0), pairAddressToLatestHashGet(pairAddress1)];
-                if ((latestHash0 !== hash0) || (latestHash1 !== hash1)) {
-                    logger.info("index.js: Hashes Changed", {meta: {hash0, latestHash0, hash1, latestHash1}});
-                    return;
-                }
-
-                const nowNow = Date.now();
-                const delay = nowNow - now;
-                if (delay >= consts.EXPIRY) {
-                    logger.info("index.js: expired", {meta: {delay}});
-                    return;
-                }
-
-                const arbTxn = web3.eth.sendSignedTransaction(signedTxn.rawTransaction);
-
-                arbTxn
-                    .on('transactionHash', (transactionHash) => {
-                        logger.info(`index.js: transaction hash: ${transactionHash}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
-                        logtxn({
-                            hash: transactionHash,
-                            timestart: now,
-                            blockNumber,
-                            nonce,
-                            call: JSON.stringify(callData),
-                            reserve: JSON.stringify(reserveData)
-                        });
-                    })
-                    .on('receipt', (transactionReceipt) => {
-                        logger.info(transactionReceipt, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
-                    })
-                    .on('confirmation', (confirmationNumber) => {
-                        logger.info(`index.js: confirmation number: ${confirmationNumber}`, {meta: {txn: postGasEstimateTransaction, args: reserveData}});
-                    })
-                    .on('error', (error) => {
-                        logger.error(error, {meta: {msg: "index.js: txn failed", txn: postGasEstimateTransaction, args: reserveData}});
-                    });
-            });
-        });
+        await SendArbTransactions({postGasEstimateTransaction, senderAccount, reserveData, hash0, hash1, web3, now});
     } catch (error) {
         logger.error(error, {meta: {msg: "index.js: failure in CheckArbOneWay"}});
     }

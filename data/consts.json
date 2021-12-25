@@ -12,5 +12,7 @@
     "MAX_GAS_PRICE": "100000000000000000",
     "CHECKING_DELAY": 500,
     "CANCEL_GASPRICE": "1.5",
-    "CHECKS": 4
+    "CHECKS": 4,
+    "TX_COUNT": 4,
+    "TX_DELAY": 100
 }

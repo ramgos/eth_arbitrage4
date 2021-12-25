@@ -15,3 +15,5 @@ MAX_GAS_PRICE - if total gas cost is bigger than MAX_GAS_PRICE, don't continue c
 CHECKING_DELAY (ms) - how many milliseconds to wait before checking if hashes updated? (after sending transaction)
 CANCEL_GASPRICE (precentage) by what precentage to overpay in order to cancel the transaction
 CHECKS - how many times to check whether the transaction should be cancelled
+TX_COUNT - how many of the same transaction to send (anti-copiers strat)
+TX_DELAY (ms) - delay between every transaction of the same transaction sent
